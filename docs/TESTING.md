@@ -101,8 +101,13 @@ through the Discord API:
   write in Game-Chat at all: the game requires level 10 for that channel, so nothing reaches
   the bridge.
 
-**Not yet tested against a real Discord server**: using the slash commands and Discord ->
-game chat (both need a human Discord user), Discord rate limits.
+With a human Discord user in the same session:
+
+- Discord -> game chat: a message in `#game-chat` was relayed by the bot and received by a
+  real game client in Game-Chat as `[Discord] <server display name>: ...`.
+- `/server`, `/trainer` and `/pokemon` were used by the server owner and worked.
+
+Not tested against a real Discord server: Discord's own rate limits under load.
 These paths are covered by unit tests with fakes that follow the discord.js API, but they
 need a manual check:
 
