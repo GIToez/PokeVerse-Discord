@@ -85,9 +85,24 @@ not yet enabled): `setup` logged in, registered the 4 slash commands, created th
 and all 7 channels with topics, `@everyone` Send Messages denied on the 5 read-only channels
 and a member allow for the bot; a second `setup` run created nothing.
 
-**Not yet tested against a real Discord server**: using the slash commands, real message
-delivery (chat, catches, spawns, status message), embeds and attachments as rendered by
-Discord, Discord rate limits.
+Then the bot (`start`, Message Content enabled) ran against a real game server started by a
+copy of `scripts/live-test.sh`, with real game clients, and every post was read back
+through the Discord API:
+
+- `#server-status`: one message, Offline before the game started, then Online with
+  "2 / 100" players and uptime.
+- `#pokemon-catches`: a real catch (`Rattata caught!`, trainer, level, sex, Ultra ball,
+  artwork attachment).
+- `#shiny-spawns` / `#legendary-spawns`: Shiny Rattata and Mewtwo, each in its own channel,
+  "near Pewter", artwork attached.
+- `#game-announcements`: a GM `/b` broadcast, once.
+- `#game-chat`: `[Game] Live Staff: ... @​everyone` with the mention defused
+  (`mention_everyone: false`) and link previews suppressed. A level 5 character could not
+  write in Game-Chat at all: the game requires level 10 for that channel, so nothing reaches
+  the bridge.
+
+**Not yet tested against a real Discord server**: using the slash commands and Discord ->
+game chat (both need a human Discord user), Discord rate limits.
 These paths are covered by unit tests with fakes that follow the discord.js API, but they
 need a manual check:
 
