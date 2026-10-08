@@ -54,7 +54,10 @@ export function pokemonDisplayName(species: string, extraPoints: number | null |
 
 export function buildCatchEmbed(event: CatchEvent, time: number): APIEmbed {
   const name = pokemonDisplayName(event.species, event.extraPoints);
-  const tags = [event.shiny ? "Shiny" : undefined, event.legendary ? "Legendary" : undefined].filter(Boolean);
+  const tags = [
+    event.legendary ? "Legendary" : undefined,
+    event.shiny && !/^shiny\b/i.test(event.species) ? "Shiny" : undefined,
+  ].filter(Boolean);
   const fields: NonNullable<APIEmbed["fields"]> = [
     { name: "Trainer", value: plain(event.trainer), inline: true },
     { name: "Pokemon", value: plain(name), inline: true },

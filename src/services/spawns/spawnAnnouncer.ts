@@ -64,7 +64,11 @@ export function describeLocation(event: SpawnEvent, mode: BotConfig["spawns"]["l
 }
 
 export function buildSpawnEmbed(event: SpawnEvent, time: number, location: string | undefined): APIEmbed {
-  const kind = event.shiny && event.legendary ? "Shiny legendary" : event.legendary ? "Legendary" : "Shiny";
+  const prefix = [
+    event.legendary ? "Legendary" : undefined,
+    event.shiny && !/^shiny\b/i.test(event.species) ? "Shiny" : undefined,
+  ].filter(Boolean).join(" ");
+  const name = prefix ? `${prefix} ${event.species}` : event.species;
   const fields: NonNullable<APIEmbed["fields"]> = [{ name: "Pokemon", value: plain(event.species), inline: true }];
   if (event.level !== null && event.level !== undefined && event.level > 0) {
     fields.push({ name: "Level", value: String(event.level), inline: true });
@@ -74,8 +78,8 @@ export function buildSpawnEmbed(event: SpawnEvent, time: number, location: strin
     fields.push({ name: "Location", value: plain(location), inline: false });
   }
   return {
-    title: `${kind} spotted: ${event.species}`,
-    description: `A ${kind.toLowerCase()} **${plain(event.species)}** has appeared!`,
+    title: `${name} spotted!`,
+    description: `**${plain(event.species)}** has appeared!`,
     color: event.legendary ? COLORS.legendary : COLORS.shiny,
     fields,
     footer: event.dexNumber ? { text: `Pokedex #${padDex(event.dexNumber)}` } : undefined,

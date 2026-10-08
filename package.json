@@ -8,14 +8,14 @@
   "engines": {
     "node": ">=22"
   },
-  "main": "dist/bot.js",
+  "main": "dist/bot.cjs",
   "scripts": {
     "build": "node scripts/build.mjs",
     "typecheck": "tsc --noEmit",
     "lint": "eslint .",
     "test": "vitest run",
     "test:live": "vitest run --config vitest.live.config.ts",
-    "dev": "npm run build && node dist/bot.js start",
+    "dev": "npm run build && node dist/bot.cjs start",
     "package:windows": "node scripts/package.mjs windows",
     "package:linux": "node scripts/package.mjs linux",
     "check": "npm run typecheck && npm run lint && npm test && npm run build"

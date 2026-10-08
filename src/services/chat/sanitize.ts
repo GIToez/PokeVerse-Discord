@@ -91,7 +91,7 @@ export function neutralizeMentions(text: string): string {
 
 /** Game chat -> Discord line: "[Game] RedTrainer: text". */
 export function formatGameChatForDiscord(author: string, text: string, maxLength = 1900): string {
-  const safeAuthor = neutralizeMentions(escapeDiscordMarkdown(collapse(author)));
-  const safeText = neutralizeMentions(escapeDiscordMarkdown(collapse(text)));
+  const safeAuthor = escapeDiscordMarkdown(neutralizeMentions(collapse(author)));
+  const safeText = escapeDiscordMarkdown(neutralizeMentions(collapse(text)));
   return clamp(`[Game] ${safeAuthor}: ${safeText}`, maxLength);
 }
