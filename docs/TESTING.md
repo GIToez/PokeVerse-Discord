@@ -80,9 +80,14 @@ Tested for real:
   `POKEVERSE_CONFIRM_PRODUCTION=yes`.
 - The packaging secret scanner refusing `.env` files and token/secret values.
 
-**Not tested against a real Discord server** (no bot token or test guild was available to the
-automation): channel creation in a real guild, slash command registration and use, real
-message delivery, embeds and attachments as rendered by Discord, Discord rate limits.
+Tested in a real Discord development server (bot without Administrator, Message Content
+not yet enabled): `setup` logged in, registered the 4 slash commands, created the category
+and all 7 channels with topics, `@everyone` Send Messages denied on the 5 read-only channels
+and a member allow for the bot; a second `setup` run created nothing.
+
+**Not yet tested against a real Discord server**: using the slash commands, real message
+delivery (chat, catches, spawns, status message), embeds and attachments as rendered by
+Discord, Discord rate limits.
 These paths are covered by unit tests with fakes that follow the discord.js API, but they
 need a manual check:
 
