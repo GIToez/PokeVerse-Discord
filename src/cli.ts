@@ -196,10 +196,10 @@ export async function main(argv: string[]): Promise<number> {
     case "setup":
     case "start": {
       logger.info("Starting PokeVerse Discord bot", describeConfig(config));
-      const app = new BotApp(config, logger);
+      const app = new BotApp(config, logger, { setupOnly: args.command === "setup" });
       try {
         if (args.command === "setup") {
-          await app.start({ setupOnly: true });
+          await app.start();
           await app.stop();
           return 0;
         }

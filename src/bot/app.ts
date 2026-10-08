@@ -19,6 +19,8 @@ export class StartupError extends Error {
 }
 
 export const GATEWAY_INTENTS = [GatewayIntentBits.Guilds, GatewayIntentBits.GuildMessages, GatewayIntentBits.MessageContent];
+/** Channel setup only needs guild data, so it works before Message Content is enabled. */
+export const SETUP_GATEWAY_INTENTS = [GatewayIntentBits.Guilds];
 
 /** Explains the usual login failures in plain words. */
 export function explainLoginError(error: unknown, config: BotConfig): StartupError {
@@ -46,9 +48,10 @@ export class BotApp {
   constructor(
     private readonly config: BotConfig,
     private readonly logger: Logger,
+    private readonly options: { setupOnly?: boolean } = {},
   ) {
     this.store = new StateStore(config.stateFile, config.profile);
-    this.client = new Client({ intents: GATEWAY_INTENTS, allowedMentions: { parse: [] } });
+    this.client = new Client({ intents: options.setupOnly ? SETUP_GATEWAY_INTENTS : GATEWAY_INTENTS, allowedMentions: { parse: [] } });
     this.integration = new GameIntegration({
       config,
       store: this.store,
@@ -60,8 +63,8 @@ export class BotApp {
   }
 
   /** Logs in, checks the guild, registers commands, runs setup (if enabled) and starts the bridge. */
-  async start(options: { setupOnly?: boolean } = {}): Promise<void> {
-    const { config, logger, client } = this;
+  async start(): Promise<void> {
+    const { config, logger, client, options } = this;
     client.on(Events.Error, (error) => logger.error("Discord client error", { error }));
     client.on(Events.Warn, (message) => logger.warn("Discord warning", { message }));
     client.on(Events.ShardDisconnect, (event) => logger.warn("Disconnected from Discord", { code: event.code }));
