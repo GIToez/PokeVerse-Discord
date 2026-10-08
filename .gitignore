@@ -1,0 +1,16 @@
+node_modules/
+dist/
+coverage/
+builds/dev/*
+builds/production/*
+!builds/dev/README.md
+!builds/production/README.md
+data/
+logs/
+*.log
+.env
+.env.*
+!.env.example
+!.env.development.example
+!.env.production.example
+config.local.lua
