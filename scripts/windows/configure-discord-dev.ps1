@@ -83,11 +83,14 @@ function New-Secret {
 
 function Find-GameServer([string]$hint) {
   $candidates = @()
-  if ($hint) { $candidates += $hint; $candidates += (Join-Path $hint "server-windows") }
-  if ($env:POKEVERSE_GAME_DIR) { $candidates += $env:POKEVERSE_GAME_DIR; $candidates += (Join-Path $env:POKEVERSE_GAME_DIR "server-windows") }
-  $parent = Split-Path -Parent $here
-  foreach ($dir in @(Get-ChildItem -Path $parent -Directory -ErrorAction SilentlyContinue)) {
-    $candidates += (Join-Path $dir.FullName "server-windows")
+  $roots = @()
+  if ($hint) { $roots += $hint }
+  if ($env:POKEVERSE_GAME_DIR) { $roots += $env:POKEVERSE_GAME_DIR }
+  $roots += @(Get-ChildItem -Path (Split-Path -Parent $here) -Directory -ErrorAction SilentlyContinue | ForEach-Object { $_.FullName })
+  foreach ($root in $roots) {
+    $candidates += $root
+    $candidates += (Join-Path $root "server-windows")
+    $candidates += (Join-Path $root "server")
   }
   foreach ($candidate in $candidates) {
     if ($candidate -and (Test-Path (Join-Path $candidate "config.lua"))) {

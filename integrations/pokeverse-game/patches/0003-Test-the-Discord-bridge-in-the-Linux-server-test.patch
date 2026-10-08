@@ -1,0 +1,532 @@
+From 0c9a86d55ff955462cb758b84ab95049dd97ee05 Mon Sep 17 00:00:00 2001
+From: Cursor Agent <cursoragent@cursor.com>
+Date: Thu, 8 Oct 2026 08:01:52 +0000
+Subject: [PATCH 3/4] Test the Discord bridge in the Linux server test
+
+Real game clients check authentication, every request, chat in both directions,
+loop prevention, a real catch and a real failed throw, spawn events and reconnects.
+The /bridgetest talkaction is only copied into the temporary test server.
+---
+ .github/workflows/windows-dev-package.yml     |   2 +-
+ scripts/discord-bridge-test.py                | 273 ++++++++++++++++++
+ scripts/test-lua-json.lua                     |  57 ++++
+ scripts/test-server-linux.sh                  |  28 +-
+ .../discord-bridge-test-talkaction.lua        |  78 +++++
+ 5 files changed, 435 insertions(+), 3 deletions(-)
+ create mode 100644 scripts/discord-bridge-test.py
+ create mode 100644 scripts/test-lua-json.lua
+ create mode 100644 scripts/testing/discord-bridge-test-talkaction.lua
+
+diff --git a/.github/workflows/windows-dev-package.yml b/.github/workflows/windows-dev-package.yml
+index acf9755..d531c5b 100644
+--- a/.github/workflows/windows-dev-package.yml
++++ b/.github/workflows/windows-dev-package.yml
+@@ -143,7 +143,7 @@ jobs:
+           sudo apt-get install -y --no-install-recommends cmake ninja-build g++ pkg-config \
+             libboost-system-dev libboost-filesystem-dev libboost-thread-dev libboost-regex-dev \
+             liblua5.1-0-dev libgmp-dev libsqlite3-dev libmariadb-dev libxml2-dev libssl-dev \
+-            mariadb-server
++            mariadb-server lua5.1
+           sudo systemctl stop mariadb || true
+       - name: Build server
+         run: |
+diff --git a/scripts/discord-bridge-test.py b/scripts/discord-bridge-test.py
+new file mode 100644
+index 0000000..8c08e0a
+--- /dev/null
++++ b/scripts/discord-bridge-test.py
+@@ -0,0 +1,273 @@
++#!/usr/bin/env python3
++"""Integration test for the Discord bridge (src/discordbridge.cpp + 056-discordBridge.lua).
++
++Runs against a live server started with the bridge enabled. Uses real game clients
++(scripts/protocol-test.py) for the chat and catch checks. Exits non-zero on failure.
++
++  --catch-test needs the test-only talkaction from scripts/testing/ installed as
++  "/bridgetest" (scripts/test-server-linux.sh does that in its temporary copy).
++"""
++import argparse
++import hashlib
++import hmac
++import importlib.util
++import json
++import os
++import socket
++import struct
++import sys
++import time
++
++here = os.path.dirname(os.path.abspath(__file__))
++spec = importlib.util.spec_from_file_location("protocol_test", os.path.join(here, "protocol-test.py"))
++pt = importlib.util.module_from_spec(spec)
++spec.loader.exec_module(pt)
++
++failures = []
++
++
++def check(name, condition, detail=""):
++    print(("PASS  " if condition else "FAIL  ") + name + (("  (" + detail + ")") if detail and not condition else ""))
++    if not condition:
++        failures.append(name)
++
++
++class Bridge:
++    def __init__(self, host, port, secret, timeout=10):
++        self.sock = socket.create_connection((host, port), timeout=timeout)
++        self.buf = b""
++        self.events = []
++        self.responses = {}
++        self.next_id = 0
++        hello = self.read()
++        self.hello = hello
++        if secret is not None:
++            mac = hmac.new(secret.encode(), hello["nonce"].encode(), hashlib.sha256).hexdigest()
++            self.send({"type": "auth", "hmac": mac})
++            self.welcome = self.read()
++
++    def send(self, obj):
++        self.sock.sendall((json.dumps(obj) + "\n").encode())
++
++    def read(self, timeout=10):
++        self.sock.settimeout(timeout)
++        while b"\n" not in self.buf:
++            chunk = self.sock.recv(65536)
++            if not chunk:
++                return None
++            self.buf += chunk
++        line, self.buf = self.buf.split(b"\n", 1)
++        return json.loads(line)
++
++    def pump(self, seconds):
++        """Reads messages for up to `seconds`, storing events/responses."""
++        end = time.time() + seconds
++        while time.time() < end:
++            try:
++                msg = self.read(timeout=max(0.05, end - time.time()))
++            except socket.timeout:
++                break
++            if msg is None:
++                raise RuntimeError("bridge closed the connection")
++            if msg["type"] == "event":
++                self.events.append(msg)
++            elif msg["type"] == "response":
++                self.responses[msg["requestId"]] = msg
++            elif msg["type"] == "ping":
++                self.send({"type": "pong"})
++
++    def request(self, method, params=None, timeout=10):
++        self.next_id += 1
++        rid = "t%d" % self.next_id
++        self.send({"type": "request", "requestId": rid, "method": method, "params": params or {}})
++        end = time.time() + timeout
++        while rid not in self.responses and time.time() < end:
++            self.pump(0.2)
++        return self.responses.pop(rid, None)
++
++    def wait_event(self, predicate, timeout):
++        end = time.time() + timeout
++        while time.time() < end:
++            for e in self.events:
++                if predicate(e["event"]):
++                    return e
++            self.pump(0.2)
++        return None
++
++
++class Player:
++    def __init__(self, args, account, password, character):
++        a = argparse.Namespace(host=args.host, login_port=args.login_port, account=account, password=password,
++                               timeout=30)
++        chars = pt.login(a)
++        name, world, ip, port = [c for c in chars if c[0] == character][0]
++        a.character = character
++        self.conn, self.id, self.pos = pt.enter_game(a, args.host, port)
++        self.packets = []
++
++    def open_channel(self, channel_id):
++        self.conn.send(struct.pack("<BH", 0x98, channel_id))
++
++    def say(self, text):
++        self.conn.send(struct.pack("<BB", 0x96, 1) + pt.pstr(text))
++
++    def say_channel(self, channel_id, text):
++        self.conn.send(struct.pack("<BBH", 0x96, 7, channel_id) + pt.pstr(text))
++
++    def collect(self, seconds):
++        self.packets += pt.drain(self.conn, seconds)
++
++    def received(self, needle):
++        return any(needle in p for p in self.packets)
++
++    def close(self):
++        self.conn.close()
++
++
++def main():
++    ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
++    ap.add_argument("--host", default="127.0.0.1")
++    ap.add_argument("--login-port", type=int, default=7564)
++    ap.add_argument("--bridge-port", type=int, default=7199)
++    ap.add_argument("--secret", required=True)
++    ap.add_argument("--catch-test", action="store_true")
++    ap.add_argument("--listener", default="test:test:Trainer", help="account:password:character (ordinary trainer)")
++    ap.add_argument("--speaker", default="admin:admin:Admin",
++                    help="account:password:character allowed to talk in Game-Chat (level 10+ or staff)")
++    ap.add_argument("--staff-character", default="Admin", help="staff character that lookups must hide")
++    args = ap.parse_args()
++
++    # Authentication
++    bad = Bridge(args.host, args.bridge_port, None)
++    check("hello has protocol and nonce", bad.hello.get("type") == "hello" and len(bad.hello.get("nonce", "")) == 64)
++    bad.send({"type": "auth", "hmac": "00" * 32})
++    reply = bad.read()
++    check("wrong secret is rejected", reply and reply.get("code") == "auth_failed", str(reply))
++    check("connection closed after failed auth", bad.read() is None)
++
++    b = Bridge(args.host, args.bridge_port, args.secret)
++    check("welcome after valid auth", b.welcome and b.welcome.get("type") == "welcome", str(b.welcome))
++    boot = b.welcome["bootId"]
++    b.pump(2)
++    states = [e["event"]["state"] for e in b.events if e["event"]["kind"] == "server_state"]
++    check("queued server_state events delivered after connect", "normal" in states, str(states))
++    ids = [e["id"] for e in b.events]
++    check("event ids unique and prefixed with boot id", len(ids) == len(set(ids)) and all(i.startswith(boot + "-") for i in ids))
++
++    # Read-only requests
++    r = b.request("server.status")
++    check("server.status", r and r["ok"] and r["result"]["state"] == "normal" and r["result"]["uptime"] >= 0, str(r))
++    r = b.request("bridge.config")
++    check("bridge.config", r and r["ok"] and r["result"]["chatChannelId"] == 7 and "Mewtwo" in r["result"]["legendary"], str(r))
++    r = b.request("pokemon.lookup", {"name": "pikachu"})
++    res = r and r.get("result") or {}
++    check("pokemon.lookup Pikachu", r and r["ok"] and res.get("found") and res.get("dexNumber") == 25
++          and res.get("types") == ["Electric"], str(r)[:300])
++    r = b.request("pokemon.lookup", {"name": "Mewtwo"})
++    check("pokemon.lookup legendary flag", r and r["result"].get("legendary") is True, str(r)[:300])
++    r = b.request("pokemon.lookup", {"name": "Not A Pokemon"})
++    check("pokemon.lookup unknown", r and r["ok"] and r["result"] == {"found": False}, str(r))
++    r = b.request("pokemon.search", {"query": "bulba", "limit": 5})
++    check("pokemon.search", r and r["ok"] and "Bulbasaur" in r["result"]["names"], str(r))
++    listener_account, listener_password, trainer = args.listener.split(":", 2)
++    speaker_account, speaker_password, speaker_name = args.speaker.split(":", 2)
++    r = b.request("trainer.lookup", {"name": trainer.lower()})
++    check("trainer.lookup", r and r["ok"] and r["result"].get("found") and r["result"]["name"] == trainer, str(r))
++    r = b.request("trainer.lookup", {"name": args.staff_character})
++    check("trainer.lookup hides staff", r and r["ok"] and r["result"] == {"found": False}, str(r))
++    r = b.request("trainer.lookup", {"name": "a' OR '1'='1"})
++    check("trainer.lookup rejects invalid names", r and not r["ok"] and r["error"]["code"] == "invalid_params", str(r))
++    r = b.request("no.such.method")
++    check("unknown method", r and not r["ok"] and r["error"]["code"] == "unknown_method", str(r))
++    b.send({"type": "request", "requestId": "x", "method": "server.status", "params": "not-an-object"})
++    b.sock.sendall(b"this is not json\n")
++    r = b.request("server.status")
++    check("bridge survives malformed input", r is not None and r["ok"], str(r))
++
++    # Chat in both directions with real game clients
++    listener = Player(args, listener_account, listener_password, trainer)
++    speaker = Player(args, speaker_account, speaker_password, speaker_name)
++    listener.open_channel(7)
++    speaker.open_channel(7)
++    listener.collect(1.5)
++    speaker.collect(0.5)
++
++    marker = "bridge test %d" % int(time.time())
++    speaker.say_channel(7, marker)
++    e = b.wait_event(lambda ev: ev["kind"] == "chat" and ev.get("text") == marker, 10)
++    check("game chat -> bridge event", e is not None and e["event"]["author"] == speaker_name and e["event"]["channelId"] == 7)
++
++    r = b.request("chat.send", {"author": "Jim", "text": "hello from discord \u00e9 \U0001F600 @everyone"})
++    check("chat.send delivered", r and r["ok"] and r["result"]["delivered"] >= 2, str(r))
++    listener.collect(2)
++    expected = pt.pstr("[Discord] Jim") + struct.pack("<HBH", 0, 7, 7) + pt.pstr("hello from discord \xe9 ? @everyone")
++    check("discord message shown in game channel", listener.received(expected))
++    b.pump(2)
++    echoed = [x for x in b.events if x["event"]["kind"] == "chat" and "discord" in x["event"].get("text", "")]
++    check("discord message is not echoed back (no loop)", not echoed, str(echoed))
++
++    r = b.request("chat.send", {"author": "", "text": "x"})
++    check("chat.send validates params", r and not r["ok"], str(r))
++
++    if args.catch_test:
++        before = b.request("trainer.lookup", {"name": trainer})["result"]["caught"]
++        listener.say("/bridgetest miss Bulbasaur")
++        listener.collect(7)
++        b.pump(1)
++        check("failed catch produces no catch event", not [x for x in b.events if x["event"]["kind"] == "catch"])
++
++        listener.say("/bridgetest catch Rattata")
++        e = b.wait_event(lambda ev: ev["kind"] == "catch", 15)
++        check("successful catch event", e is not None and e["event"]["trainer"] == trainer
++              and e["event"]["species"] == "Rattata" and e["event"]["ball"] == "ultra"
++              and e["event"]["shiny"] is False and e["event"]["legendary"] is False, str(e))
++        listener.collect(1)
++        after = b.request("trainer.lookup", {"name": trainer})["result"]["caught"]
++        check("catch is registered in game data", after == before + 1, "%s -> %s" % (before, after))
++        catches = [x for x in b.events if x["event"]["kind"] == "catch"]
++        check("exactly one catch event", len(catches) == 1, str(len(catches)))
++
++        listener.say("/bridgetest spawn Shiny Rattata")
++        e = b.wait_event(lambda ev: ev["kind"] == "spawn" and ev["species"] == "Shiny Rattata", 10)
++        check("shiny spawn event (script)", e is not None and e["event"]["shiny"] is True
++              and e["event"]["source"] == "script" and e["event"]["startup"] is False, str(e))
++        listener.say("/bridgetest spawn Mewtwo")
++        e = b.wait_event(lambda ev: ev["kind"] == "spawn" and ev["species"] == "Mewtwo", 10)
++        check("legendary spawn event", e is not None and e["event"]["legendary"] is True, str(e))
++        listener.say("/bridgetest spawn Mewtwo")
++        listener.collect(2)
++        b.pump(1)
++        check("repeated script legendary spawn is rate limited",
++              len([x for x in b.events if x["event"]["kind"] == "spawn" and x["event"]["species"] == "Mewtwo"]) == 1)
++        listener.say("/bridgetest spawn Rattata")
++        listener.collect(2)
++        b.pump(1)
++        check("ordinary spawn produces no event",
++              not [x for x in b.events if x["event"]["kind"] == "spawn" and x["event"]["species"] == "Rattata"])
++
++    spawn_events = [x for x in b.events if x["event"]["kind"] == "spawn" and x["event"]["source"] == "spawn"]
++    print("INFO  spawn-system shiny spawns seen: %d" % len(spawn_events))
++
++    # Reconnect: a second authenticated client replaces the first.
++    listener.close()
++    speaker.close()
++    b2 = Bridge(args.host, args.bridge_port, args.secret)
++    check("reconnect accepted", b2.welcome and b2.welcome.get("bootId") == boot)
++    r = b2.request("server.status")
++    check("requests work after reconnect", r and r["ok"])
++    try:
++        old = b.read(timeout=3)
++    except (socket.timeout, OSError):
++        old = "timeout"
++    check("previous session closed on reconnect", old is None, str(old))
++
++    print()
++    if failures:
++        print("FAIL: %d check(s) failed: %s" % (len(failures), ", ".join(failures)))
++        return 1
++    print("PASS: Discord bridge integration checks passed.")
++    return 0
++
++
++if __name__ == "__main__":
++    sys.exit(main())
+diff --git a/scripts/test-lua-json.lua b/scripts/test-lua-json.lua
+new file mode 100644
+index 0000000..228a0e2
+--- /dev/null
++++ b/scripts/test-lua-json.lua
+@@ -0,0 +1,57 @@
++-- Unit tests for core/server/data/lib/013-json.lua (run: lua5.1 scripts/test-lua-json.lua)
++local root = arg and arg[0] and arg[0]:match("^(.*)/scripts/") or "."
++dofile(root .. "/core/server/data/lib/013-json.lua")
++
++local failures, count = 0, 0
++local function check(name, condition)
++    count = count + 1
++    if (not condition) then
++        failures = failures + 1
++        print("FAIL: " .. name)
++    end
++end
++
++-- Encoding
++check("encode object sorted", JSON.encode({b = 1, a = "x"}) == '{"a":"x","b":1}')
++check("encode array", JSON.encode({1, 2, 3}) == "[1,2,3]")
++check("encode empty array", JSON.encode(JSON.array()) == "[]")
++check("encode empty object", JSON.encode({}) == "{}")
++check("encode bools", JSON.encode({t = true, f = false}) == '{"f":false,"t":true}')
++check("encode float", JSON.encode(1.5) == "1.5")
++check("encode escapes", JSON.encode('a"b\\c\n') == '"a\\"b\\\\c\\n"')
++check("encode latin1", JSON.encode("caf\233") == '"caf\\u00e9"')
++check("encode control", JSON.encode("\1") == '"\\u0001"')
++check("encode nested", JSON.encode({x = {y = {1}}}) == '{"x":{"y":[1]}}')
++check("encode nan", JSON.encode(0 / 0) == "null")
++
++-- Decoding
++local v = JSON.decode('{"type":"request","requestId":"r1","params":{"name":"Pikachu","limit":5}}')
++check("decode object", v and v.type == "request" and v.params.name == "Pikachu" and v.params.limit == 5)
++v = JSON.decode('[1, "two", true, false, null, 3.25, -4e2]')
++check("decode array", v and v[1] == 1 and v[2] == "two" and v[3] == true and v[4] == false and v[6] == 3.25 and v[7] == -400)
++check("decode unicode latin1", JSON.decode('"caf\\u00e9"') == "caf\233")
++check("decode unicode outside latin1", JSON.decode('"\\u4e2d"') == "?")
++check("decode surrogate pair", JSON.decode('"a\\ud83d\\ude00b"') == "a?b")
++check("decode raw utf8 2-byte", JSON.decode('"caf\195\169"') == "caf\233")
++check("decode raw utf8 4-byte", JSON.decode('"x\240\159\152\128y"') == "x?y")
++check("decode escapes", JSON.decode('"a\\"b\\\\c\\/d\\n"') == 'a"b\\c/d\n')
++check("decode whitespace", JSON.decode('  { "a" : [ ] }  ').a ~= nil)
++
++local bad = {'{"a":1', '{"a" 1}', '[1,]x', '"unterminated', '{"a":tru}', "", "nul", '{"a":1}x', '"\1"'}
++for _, input in ipairs(bad) do
++    local value, err = JSON.decode(input)
++    check("reject " .. input, value == nil and type(err) == "string")
++end
++check("reject non-string", JSON.decode(nil) == nil)
++
++local deep = string.rep("[", 30) .. string.rep("]", 30)
++check("reject deep nesting", JSON.decode(deep) == nil)
++
++-- Round trip
++local original = {kind = "catch", trainer = "Red", level = 25, shiny = true, list = JSON.array({"a", "b"})}
++local decoded = JSON.decode(JSON.encode(original))
++check("round trip", decoded.kind == "catch" and decoded.trainer == "Red" and decoded.level == 25 and decoded.shiny == true
++    and decoded.list[2] == "b")
++
++print(string.format("%d/%d JSON tests passed", count - failures, count))
++os.exit(failures == 0 and 0 or 1)
+diff --git a/scripts/test-server-linux.sh b/scripts/test-server-linux.sh
+index 15ba23b..4b5fa5c 100755
+--- a/scripts/test-server-linux.sh
++++ b/scripts/test-server-linux.sh
+@@ -14,7 +14,12 @@ server_pid=""
+ db_pid=""
+ 
+ cleanup() {
+-  [ -n "$server_pid" ] && kill "$server_pid" 2>/dev/null && wait "$server_pid" 2>/dev/null || true
++  if [ -n "$server_pid" ]; then
++    kill -INT "$server_pid" 2>/dev/null || true
++    for _ in $(seq 30); do kill -0 "$server_pid" 2>/dev/null || break; sleep 1; done
++    kill -9 "$server_pid" 2>/dev/null || true
++    wait "$server_pid" 2>/dev/null || true
++  fi
+   [ -n "$db_pid" ] && kill "$db_pid" 2>/dev/null && wait "$db_pid" 2>/dev/null || true
+   if [ "${KEEP_WORK:-0}" != 1 ]; then rm -rf "$work"; else echo "Work directory kept: $work"; fi
+ }
+@@ -43,6 +48,8 @@ for f in "$root/core/server/schemas/pokeverse-extensions.sql" "$root/core/databa
+   $db -upokeverse -ppokeverse pokeverse < "$f" >/dev/null
+ done
+ $db -upokeverse -ppokeverse pokeverse -e "CALL pokeverse_create_account('newuser', 'secret'); CALL pokeverse_create_character('newuser', 'New Trainer', 0);"
++# Characters used only by the Discord bridge test (each logs in once per run).
++$db -upokeverse -ppokeverse pokeverse -e "CALL pokeverse_create_account('bridgetrainer', 'secret'); CALL pokeverse_create_character('bridgetrainer', 'Bridge Trainer', 0); CALL pokeverse_create_account('bridgestaff', 'secret'); CALL pokeverse_create_character('bridgestaff', 'Bridge Staff', 0); CALL pokeverse_set_group('Bridge Staff', 6);"
+ tables=$($db -upokeverse -ppokeverse -N pokeverse -e "SELECT COUNT(*) FROM information_schema.tables WHERE table_schema='pokeverse'")
+ echo "Tables: $tables"
+ 
+@@ -50,6 +57,16 @@ step "Starting the server"
+ mkdir -p "$work/server/logs/server" "$work/server/logs/chat" "$work/server/logs/bots"
+ cp -r "$root/core/server/data" "$root/core/server/config.lua" "$root/core/server/pt_br.loc" "$work/server/"
+ cp "$binary" "$work/server/"
++# Discord bridge enabled through the machine-local override file, plus the test-only
++# /bridgetest talkaction (scripts/testing/) used to drive real catches and spawns.
++bridge_secret="ci-bridge-secret-$(date +%s)-$RANDOM"
++cat > "$work/server/config.local.lua" <<LUA
++discordBridgeEnabled = true
++discordBridgeSecret = "$bridge_secret"
++LUA
++cp "$root/scripts/testing/discord-bridge-test-talkaction.lua" "$work/server/data/talkactions/scripts/bridgetest.lua"
++sed -i 's#</talkactions>#\t<talkaction words="/bridgetest" event="script" value="bridgetest.lua"/>\n</talkactions>#' \
++  "$work/server/data/talkactions/talkactions.xml"
+ (cd "$work/server" && exec "./$(basename "$binary")" >"$work/server.log" 2>&1) &
+ server_pid=$!
+ for _ in $(seq 180); do
+@@ -60,6 +77,7 @@ done
+ grep -q "server Online!" "$work/server.log" || { tail -50 "$work/server.log"; echo "FAIL: server did not start"; exit 1; }
+ grep -E "Global address|Local ports|server Online" "$work/server.log"
+ grep -q "Global address: 127.0.0.1" "$work/server.log" || { echo "FAIL: server is not bound to 127.0.0.1"; exit 1; }
++grep -q "Discord bridge listening on 127.0.0.1:7199" "$work/server.log" || { echo "FAIL: Discord bridge did not start"; exit 1; }
+ 
+ step "Protocol tests"
+ python3 "$root/scripts/protocol-test.py" --account test --password wrong --character Trainer --expect-login-failure
+@@ -68,6 +86,12 @@ python3 "$root/scripts/protocol-test.py" --account admin --password admin --char
+ python3 "$root/scripts/protocol-test.py" --account newuser --password secret --character "New Trainer" --walk east,south
+ sleep 3
+ 
++step "Discord bridge tests"
++python3 "$root/scripts/discord-bridge-test.py" --secret "$bridge_secret" --catch-test \
++  --listener "bridgetrainer:secret:Bridge Trainer" --speaker "bridgestaff:secret:Bridge Staff" --staff-character "Bridge Staff"
++lua5.1 "$root/scripts/test-lua-json.lua"
++sleep 3
++
+ step "Database checks"
+ $db -upokeverse -ppokeverse pokeverse -e "SELECT name, level, posx, posy, posz, lastlogin > 0 AS has_logged_in, online FROM players WHERE id > 1"
+ moved=$($db -upokeverse -ppokeverse -N pokeverse -e "SELECT COUNT(*) FROM players WHERE name IN ('Trainer','Admin','New Trainer') AND lastlogin > 0 AND NOT (posx = 3307 AND posy = 300)")
+@@ -83,4 +107,4 @@ step "Stopping the server"
+ kill -INT "$server_pid"
+ for _ in $(seq 60); do kill -0 "$server_pid" 2>/dev/null || break; sleep 1; done
+ server_pid=""
+-echo "PASS: database setup, server start, login, character creation, game login and movement verified."
++echo "PASS: database setup, server start, login, character creation, game login, movement and Discord bridge verified."
+diff --git a/scripts/testing/discord-bridge-test-talkaction.lua b/scripts/testing/discord-bridge-test-talkaction.lua
+new file mode 100644
+index 0000000..18509dd
+--- /dev/null
++++ b/scripts/testing/discord-bridge-test-talkaction.lua
+@@ -0,0 +1,78 @@
++-- TEST ONLY - never part of the game data or any package.
++-- scripts/test-server-linux.sh copies this file into a temporary server directory to
++-- drive real game code paths (monster death, corpse, ball throw, catch) from the
++-- Discord bridge integration test.
++--
++--   /bridgetest catch <pokemon>  real kill + ultra ball throw; catch boost so it succeeds
++--   /bridgetest miss <pokemon>   real kill + ultra ball throw without boost (fresh trainers always miss)
++--   /bridgetest spawn <monster>  creates a wild monster through doCreateMonster
++
++local function isFree(cid, pos)
++    local info = getTileInfo(pos)
++    return info and not info.protection and not info.house and doTileQueryAdd(cid, pos) == RETURNVALUE_NOERROR
++end
++
++-- Finds a free non-protection tile with a free tile to its east.
++local function findArena(cid)
++    local origin = getCreaturePosition(cid)
++    for radius = 1, 30 do
++        for dx = -radius, radius do
++            for dy = -radius, radius do
++                local a = {x = origin.x + dx, y = origin.y + dy, z = origin.z}
++                local b = {x = a.x + 1, y = a.y, z = a.z}
++                if (isFree(cid, a) and isFree(cid, b)) then
++                    return a, b
++                end
++            end
++        end
++    end
++    return nil
++end
++
++local function throwBall(cid, pos)
++    if (not isPlayer(cid)) then
++        return
++    end
++    local corpse = getTileItemByType(pos, ITEM_TYPE_CONTAINER)
++    if (not isItem(corpse)) then
++        doPlayerSendTextMessage(cid, MESSAGE_STATUS_CONSOLE_BLUE, "bridgetest: no corpse")
++        return
++    end
++    local itemid = balls["ultra"].empty
++    local ball = doPlayerAddItem(cid, itemid, 1)
++    emptyBall(cid, {uid = ball, itemid = itemid}, getThingPosition(ball), corpse, pos)
++    doPlayerSendTextMessage(cid, MESSAGE_STATUS_CONSOLE_BLUE, "bridgetest: ball thrown")
++end
++
++function onSay(cid, words, param, channel)
++    local action, name = param:match("^(%a+)%s+(.+)$")
++    if (not action) then
++        doPlayerSendTextMessage(cid, MESSAGE_STATUS_CONSOLE_BLUE, "bridgetest: usage catch|miss|spawn <name>")
++        return true
++    end
++
++    local playerPos, monsterPos = findArena(cid)
++    if (not playerPos) then
++        doPlayerSendTextMessage(cid, MESSAGE_STATUS_CONSOLE_BLUE, "bridgetest: no free tiles")
++        return true
++    end
++    doTeleportThing(cid, playerPos, false)
++
++    if (action == "spawn") then
++        local m = doCreateMonster(name, monsterPos, false)
++        doPlayerSendTextMessage(cid, MESSAGE_STATUS_CONSOLE_BLUE, "bridgetest: spawned " .. tostring(isMonster(m)))
++        return true
++    end
++
++    setPlayerExtraCatchRateTime(cid, action == "catch" and os.time() + 600 or 0)
++    setPlayerExtraCatchRateValue(cid, action == "catch" and math.max(getPokemonCatchChance(name) - 1, 0) or 0)
++
++    local m = doCreateMonster(name, monsterPos, false)
++    if (not isMonster(m)) then
++        doPlayerSendTextMessage(cid, MESSAGE_STATUS_CONSOLE_BLUE, "bridgetest: can't create " .. name)
++        return true
++    end
++    doTargetCombatHealth(cid, m, COMBAT_PHYSICALDAMAGE, -10000000, -10000000, CONST_ME_NONE)
++    addEvent(throwBall, 500, cid, monsterPos)
++    return true
++end
+-- 
+2.43.0
+

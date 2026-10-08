@@ -45,6 +45,53 @@ jobs:
           set -e
           test "$code" = "2"
 
+  live-test:
+    name: Live test against the real game server
+    needs: check
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - id: base
+        run: echo "sha=$(cat integrations/pokeverse-game/BASE_COMMIT)" >> "$GITHUB_OUTPUT"
+      - name: Check out the game at the patch base
+        uses: actions/checkout@v4
+        with:
+          repository: GIToez/PokeVerse
+          ref: ${{ steps.base.outputs.sha }}
+          path: game
+          lfs: true
+          sparse-checkout: |
+            core
+            scripts
+            docs
+            .github
+      - name: Apply the game-side bridge patches
+        working-directory: game
+        run: git -c user.name=ci -c user.email=ci@localhost am --keep-cr ../integrations/pokeverse-game/patches/*.patch
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends cmake ninja-build g++ pkg-config \
+            libboost-system-dev libboost-filesystem-dev libboost-thread-dev libboost-regex-dev \
+            liblua5.1-0-dev libgmp-dev libsqlite3-dev libmariadb-dev libxml2-dev libssl-dev \
+            mariadb-server lua5.1
+          sudo systemctl stop mariadb || true
+      - name: Build the game server
+        run: |
+          cmake -S game/core/server -B game/build/server -G Ninja -DCMAKE_BUILD_TYPE=Release
+          cmake --build game/build/server
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+      - run: npm ci
+      - name: Game-side bridge test (from the patches)
+        working-directory: game
+        run: scripts/test-server-linux.sh build/server/pokeverse-server
+      - name: Bot live tests (real server, real game clients, in-memory Discord)
+        run: scripts/live-test.sh game game/build/server/pokeverse-server
+
   package-windows:
     name: Windows development package
     needs: check

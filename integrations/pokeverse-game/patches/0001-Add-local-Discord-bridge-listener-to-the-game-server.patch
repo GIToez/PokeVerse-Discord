@@ -1,0 +1,1126 @@
+From 83fa3568e422d57f3d993eeddd3423a7eab3387c Mon Sep 17 00:00:00 2001
+From: Cursor Agent <cursoragent@cursor.com>
+Date: Thu, 8 Oct 2026 08:01:51 +0000
+Subject: [PATCH 1/4] Add local Discord bridge listener to the game server
+
+Optional newline-delimited JSON bridge on 127.0.0.1:7199 for the PokeVerse-Discord
+bot: HMAC-SHA256 challenge authentication, own network thread, bounded event and
+message queues, keepalive and reconnect handling. Emits server state changes, GM
+broadcasts and global save warnings; hands bot messages to Lua through the new
+discordbridge globalevent. Disabled by default; secrets go in the optional,
+git-ignored config.local.lua that is loaded after config.lua.
+---
+ .gitignore                        |   4 +
+ core/server/config.lua            |  12 +
+ core/server/src/configmanager.cpp |  25 ++
+ core/server/src/configmanager.h   |   6 +
+ core/server/src/discordbridge.cpp | 613 ++++++++++++++++++++++++++++++
+ core/server/src/discordbridge.h   | 141 +++++++
+ core/server/src/game.cpp          |  16 +
+ core/server/src/globalevent.cpp   |   5 +
+ core/server/src/globalevent.h     |   3 +-
+ core/server/src/luascript.cpp     |  64 ++++
+ core/server/src/luascript.h       |   4 +
+ core/server/src/otserv.cpp        |   2 +
+ 12 files changed, 894 insertions(+), 1 deletion(-)
+ create mode 100644 core/server/src/discordbridge.cpp
+ create mode 100644 core/server/src/discordbridge.h
+
+diff --git a/.gitignore b/.gitignore
+index 044a172..f81a194 100644
+--- a/.gitignore
++++ b/.gitignore
+@@ -1,3 +1,7 @@
+ # Local build output
+ /build/
+ /dist/
++
++# Machine-local server config overrides (may contain secrets)
++config.local.lua
++__pycache__/
+diff --git a/core/server/config.lua b/core/server/config.lua
+index 4e64a2d..b2f7ae7 100644
+--- a/core/server/config.lua
++++ b/core/server/config.lua
+@@ -338,3 +338,15 @@
+ 	disconnectAtExit = true
+ 	defaultTownId = 3 -- Cerulean
+ 	logMapItems = false
++
++	-- Discord bridge (PokeVerse-Discord companion bot), see docs/discord-bridge.md.
++	-- Disabled by default. The secret must be at least 16 characters and must be the
++	-- same value configured in the bot. Put real secrets in config.local.lua (next to
++	-- this file, never committed) instead of editing them here.
++	-- NOTE: discordBridgeAllowRemote = false keeps the bridge on loopback addresses only.
++	discordBridgeEnabled = false
++	discordBridgeHost = "127.0.0.1"
++	discordBridgePort = 7199
++	discordBridgeSecret = ""
++	discordBridgeQueueSize = 2000
++	discordBridgeAllowRemote = false
+diff --git a/core/server/src/configmanager.cpp b/core/server/src/configmanager.cpp
+index 576d9f0..807b15a 100644
+--- a/core/server/src/configmanager.cpp
++++ b/core/server/src/configmanager.cpp
+@@ -49,6 +49,25 @@ bool ConfigManager::load()
+ 		return false;
+ 	}
+ 
++	// Optional machine-local overrides (e.g. secrets), kept out of version control:
++	// "config.lua" -> "config.local.lua", loaded into the same state after the main file.
++	std::string localFile = m_confString[CONFIG_FILE];
++	if(localFile.size() > 4 && localFile.compare(localFile.size() - 4, 4, ".lua") == 0)
++	{
++		localFile.insert(localFile.size() - 4, ".local");
++		if(FILE* f = fopen(localFile.c_str(), "r"))
++		{
++			fclose(f);
++			if(luaL_dofile(L, localFile.c_str()))
++			{
++				std::cout << "[Error - ConfigManager::load] " << localFile << ": " << lua_tostring(L, -1) << std::endl;
++				lua_close(L);
++				L = NULL;
++				return false;
++			}
++		}
++	}
++
+ 	//parse config
+ 	if(!m_loaded) //info that must be loaded one time (unless we reset the modules involved)
+ 	{
+@@ -306,6 +325,12 @@ bool ConfigManager::load()
+ 	m_confBool[LOG_MAP_ITEMS] = getGlobalBool("logMapItems", false);
+ 	m_confNumber[TOURNAMENT_WEEK_DAY_CHECK] = getGlobalNumber("tournamentWeekDayCheck", 0);
+ 	m_confNumber[TOURNAMENT_WEEK_WINNER_STORAGE] = getGlobalNumber("tournamentWeekWinnerStorage", 7065);
++	m_confBool[DISCORD_BRIDGE_ENABLED] = getGlobalBool("discordBridgeEnabled", false);
++	m_confBool[DISCORD_BRIDGE_ALLOW_REMOTE] = getGlobalBool("discordBridgeAllowRemote", false);
++	m_confString[DISCORD_BRIDGE_HOST] = getGlobalString("discordBridgeHost", "127.0.0.1");
++	m_confString[DISCORD_BRIDGE_SECRET] = getGlobalString("discordBridgeSecret", "");
++	m_confNumber[DISCORD_BRIDGE_PORT] = getGlobalNumber("discordBridgePort", 7199);
++	m_confNumber[DISCORD_BRIDGE_QUEUE_SIZE] = getGlobalNumber("discordBridgeQueueSize", 2000);
+ 
+ 	m_loaded = true;
+ 	return true;
+diff --git a/core/server/src/configmanager.h b/core/server/src/configmanager.h
+index 2661222..2dcb10f 100644
+--- a/core/server/src/configmanager.h
++++ b/core/server/src/configmanager.h
+@@ -59,6 +59,8 @@ class ConfigManager
+ 			PREFIX_CHANNEL_LOGS,
+ 			CORES_USED,
+ 			MAILBOX_DISABLED_TOWNS,
++			DISCORD_BRIDGE_HOST,
++			DISCORD_BRIDGE_SECRET,
+ 			LAST_STRING_CONFIG /* this must be the last one */
+ 		};
+ 
+@@ -168,6 +170,8 @@ class ConfigManager
+ 			MINIMUM_LEVEL_TO_POLL_VOTE,
+ 			TOURNAMENT_WEEK_DAY_CHECK,
+ 			TOURNAMENT_WEEK_WINNER_STORAGE,
++			DISCORD_BRIDGE_PORT,
++			DISCORD_BRIDGE_QUEUE_SIZE,
+ 			LAST_NUMBER_CONFIG /* this must be the last one */
+ 		};
+ 
+@@ -278,6 +282,8 @@ class ConfigManager
+ 			DISCONNECT_AT_EXIT,
+ 			MARKET_PREMIUM,
+ 			LOG_MAP_ITEMS,
++			DISCORD_BRIDGE_ENABLED,
++			DISCORD_BRIDGE_ALLOW_REMOTE,
+ 			LAST_BOOL_CONFIG /* this must be the last one */
+ 		};
+ 
+diff --git a/core/server/src/discordbridge.cpp b/core/server/src/discordbridge.cpp
+new file mode 100644
+index 0000000..43201e2
+--- /dev/null
++++ b/core/server/src/discordbridge.cpp
+@@ -0,0 +1,613 @@
++////////////////////////////////////////////////////////////////////////
++// PokeVerse - local bridge for the PokeVerse-Discord companion bot
++////////////////////////////////////////////////////////////////////////
++// This program is free software: you can redistribute it and/or modify
++// it under the terms of the GNU General Public License as published by
++// the Free Software Foundation, either version 3 of the License, or
++// (at your option) any later version.
++//
++// This program is distributed in the hope that it will be useful,
++// but WITHOUT ANY WARRANTY; without even the implied warranty of
++// MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
++// GNU General Public License for more details.
++//
++// You should have received a copy of the GNU General Public License
++// along with this program.  If not, see <http://www.gnu.org/licenses/>.
++////////////////////////////////////////////////////////////////////////
++#include "otpch.h"
++
++#include <boost/property_tree/ptree.hpp>
++#include <boost/property_tree/json_parser.hpp>
++#include <openssl/crypto.h>
++#include <openssl/evp.h>
++#include <openssl/hmac.h>
++#include <openssl/rand.h>
++
++#include "discordbridge.h"
++#include "configmanager.h"
++#include "globalevent.h"
++#include "tasks.h"
++
++extern ConfigManager g_config;
++extern GlobalEvents* g_globalEvents;
++
++namespace
++{
++	const size_t MAX_LINE_LENGTH = 16 * 1024;
++	const size_t MAX_DIRECT_QUEUE = 500;
++	const size_t MAX_SESSION_PENDING = 16;
++	const int64_t AUTH_TIMEOUT = 10 * 1000;
++	const int64_t PING_INTERVAL = 15 * 1000;
++	const int64_t IDLE_TIMEOUT = 45 * 1000;
++
++	std::string toHex(const unsigned char* data, size_t length)
++	{
++		static const char digits[] = "0123456789abcdef";
++		std::string out;
++		out.reserve(length * 2);
++		for(size_t i = 0; i < length; ++i)
++		{
++			out += digits[data[i] >> 4];
++			out += digits[data[i] & 0x0F];
++		}
++
++		return out;
++	}
++
++	std::string messageType(const std::string& line)
++	{
++		try
++		{
++			std::istringstream stream(line);
++			boost::property_tree::ptree tree;
++			boost::property_tree::read_json(stream, tree);
++			return tree.get<std::string>("type", "");
++		}
++		catch(std::exception&) {}
++		return "";
++	}
++
++	std::string jsonField(const std::string& line, const std::string& name)
++	{
++		try
++		{
++			std::istringstream stream(line);
++			boost::property_tree::ptree tree;
++			boost::property_tree::read_json(stream, tree);
++			return tree.get<std::string>(name, "");
++		}
++		catch(std::exception&) {}
++		return "";
++	}
++}
++
++std::string DiscordBridge::escapeJson(const std::string& text)
++{
++	static const char digits[] = "0123456789abcdef";
++	std::string out;
++	out.reserve(text.size() + 8);
++	for(std::string::const_iterator it = text.begin(); it != text.end(); ++it)
++	{
++		unsigned char c = (unsigned char)*it;
++		if(c == '"')
++			out += "\\\"";
++		else if(c == '\\')
++			out += "\\\\";
++		else if(c == '\n')
++			out += "\\n";
++		else if(c == '\r')
++			out += "\\r";
++		else if(c == '\t')
++			out += "\\t";
++		else if(c < 0x20 || c >= 0x7F)
++		{
++			out += "\\u00";
++			out += digits[c >> 4];
++			out += digits[c & 0x0F];
++		}
++		else
++			out += (char)c;
++	}
++
++	return out;
++}
++
++void DiscordBridge::start()
++{
++	if(m_running)
++		return;
++
++	if(!g_config.getBool(ConfigManager::DISCORD_BRIDGE_ENABLED))
++	{
++		std::cout << ">> Discord bridge disabled (discordBridgeEnabled = false)." << std::endl;
++		return;
++	}
++
++	m_secret = g_config.getString(ConfigManager::DISCORD_BRIDGE_SECRET);
++	if(m_secret.size() < 16)
++	{
++		std::cout << "[Warning - DiscordBridge] discordBridgeSecret must be at least 16 characters; the Discord bridge stays disabled." << std::endl;
++		return;
++	}
++
++	std::string host = g_config.getString(ConfigManager::DISCORD_BRIDGE_HOST);
++	int32_t port = g_config.getNumber(ConfigManager::DISCORD_BRIDGE_PORT);
++	if(port <= 0 || port > 0xFFFF)
++	{
++		std::cout << "[Warning - DiscordBridge] Invalid discordBridgePort; the Discord bridge stays disabled." << std::endl;
++		return;
++	}
++
++	boost::system::error_code error;
++	boost::asio::ip::address address = boost::asio::ip::make_address(host, error);
++	if(error)
++	{
++		std::cout << "[Warning - DiscordBridge] discordBridgeHost must be an IP address (" << host << "); the Discord bridge stays disabled." << std::endl;
++		return;
++	}
++
++	if(!address.is_loopback() && !g_config.getBool(ConfigManager::DISCORD_BRIDGE_ALLOW_REMOTE))
++	{
++		std::cout << "[Warning - DiscordBridge] discordBridgeHost " << host << " is not a loopback address and"
++			" discordBridgeAllowRemote is false; the Discord bridge stays disabled." << std::endl;
++		return;
++	}
++
++	int32_t queueSize = g_config.getNumber(ConfigManager::DISCORD_BRIDGE_QUEUE_SIZE);
++	m_maxQueue = queueSize > 0 ? queueSize : 2000;
++
++	boost::asio::ip::tcp::endpoint endpoint(address, (uint16_t)port);
++	m_acceptor.open(endpoint.protocol(), error);
++	if(!error)
++		m_acceptor.set_option(boost::asio::ip::tcp::acceptor::reuse_address(true), error);
++	if(!error)
++		m_acceptor.bind(endpoint, error);
++	if(!error)
++		m_acceptor.listen(4, error);
++	if(error)
++	{
++		std::cout << "[Error - DiscordBridge] Cannot listen on " << host << ":" << port << " (" << error.message()
++			<< "); the Discord bridge stays disabled. The game server keeps running." << std::endl;
++		boost::system::error_code ignored;
++		m_acceptor.close(ignored);
++		return;
++	}
++
++	std::ostringstream bootId;
++	bootId << time(NULL);
++	m_bootId = bootId.str();
++
++	m_enabled = m_running = true;
++	accept();
++	m_thread = boost::thread(boost::bind(&DiscordBridge::networkThread, this));
++	std::cout << ">> Discord bridge listening on " << host << ":" << port << " (queue " << m_maxQueue << " events)." << std::endl;
++}
++
++void DiscordBridge::networkThread()
++{
++	while(m_running)
++	{
++		try
++		{
++			m_io.run();
++			break;
++		}
++		catch(std::exception& e)
++		{
++			std::cout << "[Error - DiscordBridge] " << e.what() << std::endl;
++		}
++	}
++}
++
++bool DiscordBridge::hasPendingOutput()
++{
++	boost::mutex::scoped_lock lock(m_lock);
++	return !m_events.empty() || !m_direct.empty();
++}
++
++void DiscordBridge::stop()
++{
++	if(!m_running)
++		return;
++
++	// Give a connected bot a short chance to receive the final shutdown events.
++	for(int32_t i = 0; i < 40 && m_connected && hasPendingOutput(); ++i)
++	{
++		boost::asio::post(m_io, boost::bind(&DiscordBridge::flush, this));
++		boost::this_thread::sleep(boost::posix_time::milliseconds(50));
++	}
++
++	if(m_connected)
++		boost::this_thread::sleep(boost::posix_time::milliseconds(200));
++
++	m_running = false;
++	m_enabled = false;
++	boost::asio::post(m_io, [this]()
++	{
++		boost::system::error_code ignored;
++		m_acceptor.close(ignored);
++		if(m_active)
++			m_active->close();
++	});
++
++	m_work.reset();
++	m_io.stop();
++	if(m_thread.joinable())
++		m_thread.join();
++
++	m_connected = false;
++	std::cout << ">> Discord bridge stopped." << std::endl;
++}
++
++DiscordBridgeStats DiscordBridge::getStats()
++{
++	boost::mutex::scoped_lock lock(m_lock);
++	DiscordBridgeStats stats = m_stats;
++	stats.queued = m_events.size();
++	return stats;
++}
++
++bool DiscordBridge::emitEvent(const std::string& payload)
++{
++	if(!m_enabled || payload.size() < 2 || payload.size() > MAX_LINE_LENGTH
++		|| payload[0] != '{' || payload[payload.size() - 1] != '}')
++		return false;
++
++	{
++		boost::mutex::scoped_lock lock(m_lock);
++		std::ostringstream envelope;
++		envelope << "{\"type\":\"event\",\"id\":\"" << m_bootId << "-" << ++m_sequence
++			<< "\",\"time\":" << time(NULL) << ",\"event\":" << payload << "}";
++		m_events.push_back(envelope.str());
++		while(m_events.size() > m_maxQueue)
++		{
++			m_events.pop_front();
++			++m_stats.dropped;
++		}
++	}
++
++	boost::asio::post(m_io, boost::bind(&DiscordBridge::flush, this));
++	return true;
++}
++
++bool DiscordBridge::sendMessage(const std::string& message)
++{
++	if(!m_enabled || !m_connected || message.empty() || message.size() > MAX_LINE_LENGTH)
++		return false;
++
++	{
++		boost::mutex::scoped_lock lock(m_lock);
++		if(m_direct.size() >= MAX_DIRECT_QUEUE)
++		{
++			++m_stats.dropped;
++			return false;
++		}
++
++		m_direct.push_back(message);
++	}
++
++	boost::asio::post(m_io, boost::bind(&DiscordBridge::flush, this));
++	return true;
++}
++
++StringVec DiscordBridge::takeIncoming(uint32_t max)
++{
++	StringVec messages;
++	boost::mutex::scoped_lock lock(m_lock);
++	while(!m_incoming.empty() && messages.size() < max)
++	{
++		messages.push_back(m_incoming.front());
++		m_incoming.pop_front();
++	}
++
++	return messages;
++}
++
++void DiscordBridge::flush()
++{
++	if(!m_active || !m_active->isAuthenticated() || !m_active->isOpen())
++		return;
++
++	while(m_active->pending() < MAX_SESSION_PENDING)
++	{
++		std::string message;
++		{
++			boost::mutex::scoped_lock lock(m_lock);
++			if(!m_direct.empty())
++			{
++				message = m_direct.front();
++				m_direct.pop_front();
++			}
++			else if(!m_events.empty())
++			{
++				message = m_events.front();
++				m_events.pop_front();
++			}
++			else
++				break;
++
++			++m_stats.sent;
++		}
++
++		m_active->send(message);
++	}
++}
++
++void DiscordBridge::accept()
++{
++	DiscordBridgeSession_ptr session(new DiscordBridgeSession(this));
++	m_acceptor.async_accept(session->getSocket(),
++		boost::bind(&DiscordBridge::handleAccept, this, session, boost::asio::placeholders::error));
++}
++
++void DiscordBridge::handleAccept(DiscordBridgeSession_ptr session, const boost::system::error_code& error)
++{
++	if(!m_running || !m_acceptor.is_open())
++		return;
++
++	if(!error)
++		session->start();
++
++	accept();
++}
++
++bool DiscordBridge::verifyAuth(const std::string& nonce, const std::string& hexMac) const
++{
++	unsigned char digest[EVP_MAX_MD_SIZE];
++	unsigned int length = 0;
++	if(!HMAC(EVP_sha256(), m_secret.data(), (int)m_secret.size(), (const unsigned char*)nonce.data(),
++		nonce.size(), digest, &length))
++		return false;
++
++	std::string expected = toHex(digest, length);
++	return hexMac.size() == expected.size() && CRYPTO_memcmp(hexMac.data(), expected.data(), expected.size()) == 0;
++}
++
++void DiscordBridge::onAuthenticated(DiscordBridgeSession_ptr session)
++{
++	if(m_active && m_active != session)
++		m_active->close();
++
++	m_active = session;
++	m_connected = true;
++	size_t queued = 0;
++	{
++		boost::mutex::scoped_lock lock(m_lock);
++		++m_stats.connections;
++		queued = m_events.size();
++	}
++
++	std::ostringstream welcome;
++	welcome << "{\"type\":\"welcome\",\"protocol\":" << DISCORD_BRIDGE_PROTOCOL_VERSION << ",\"bootId\":\"" << m_bootId
++		<< "\",\"serverName\":\"" << escapeJson(g_config.getString(ConfigManager::SERVER_NAME)) << "\",\"queued\":" << queued << "}";
++	session->send(welcome.str());
++	std::cout << "> Discord bot connected to the bridge (" << queued << " queued events)." << std::endl;
++	flush();
++}
++
++void DiscordBridge::onSessionClosed(DiscordBridgeSession_ptr session)
++{
++	if(m_active != session)
++		return;
++
++	m_active.reset();
++	m_connected = false;
++	std::cout << "> Discord bot disconnected from the bridge." << std::endl;
++}
++
++void DiscordBridge::onIncoming(const std::string& line)
++{
++	bool schedule = false;
++	{
++		boost::mutex::scoped_lock lock(m_lock);
++		if(m_incoming.size() >= m_maxIncoming)
++		{
++			++m_stats.rejected;
++			return;
++		}
++
++		m_incoming.push_back(line);
++		++m_stats.received;
++		if(!m_dispatchPending)
++			schedule = m_dispatchPending = true;
++	}
++
++	if(schedule)
++		Dispatcher::getInstance().addTask(createTask(boost::bind(&DiscordBridge::dispatchIncoming, this)));
++}
++
++void DiscordBridge::dispatchIncoming()
++{
++	size_t before = 0;
++	{
++		boost::mutex::scoped_lock lock(m_lock);
++		m_dispatchPending = false;
++		before = m_incoming.size();
++	}
++
++	if(g_globalEvents)
++		g_globalEvents->execute(GLOBAL_EVENT_DISCORD_BRIDGE);
++
++	bool schedule = false;
++	{
++		boost::mutex::scoped_lock lock(m_lock);
++		if(before > 0 && m_incoming.size() >= before)
++		{
++			// Nothing consumed: no onDiscordBridge globalevent is registered (or it failed).
++			m_stats.rejected += m_incoming.size();
++			m_incoming.clear();
++			std::cout << "[Warning - DiscordBridge] Incoming messages were not handled; is the discordbridge globalevent registered?" << std::endl;
++		}
++		else if(!m_incoming.empty() && !m_dispatchPending)
++			schedule = m_dispatchPending = true;
++	}
++
++	if(schedule)
++		Dispatcher::getInstance().addTask(createTask(boost::bind(&DiscordBridge::dispatchIncoming, this)));
++}
++
++DiscordBridgeSession::DiscordBridgeSession(DiscordBridge* bridge):
++	m_bridge(bridge), m_socket(bridge->getIoContext()), m_timer(bridge->getIoContext()),
++	m_buffer(MAX_LINE_LENGTH + 1), m_authenticated(false), m_closed(false), m_writing(false),
++	m_connectedAt(0), m_lastReceived(0), m_lastPing(0) {}
++
++void DiscordBridgeSession::start()
++{
++	m_connectedAt = m_lastReceived = m_lastPing = OTSYS_TIME();
++
++	unsigned char random[32];
++	if(RAND_bytes(random, sizeof(random)) != 1)
++	{
++		close();
++		return;
++	}
++
++	m_nonce = toHex(random, sizeof(random));
++	std::ostringstream hello;
++	hello << "{\"type\":\"hello\",\"protocol\":" << DISCORD_BRIDGE_PROTOCOL_VERSION << ",\"nonce\":\"" << m_nonce << "\"}";
++	send(hello.str());
++
++	read();
++	m_timer.expires_after(boost::asio::chrono::seconds(5));
++	m_timer.async_wait(boost::bind(&DiscordBridgeSession::onTimer, shared_from_this(), boost::asio::placeholders::error));
++}
++
++void DiscordBridgeSession::close()
++{
++	if(m_closed)
++		return;
++
++	m_closed = true;
++	boost::system::error_code ignored;
++	m_timer.cancel();
++	m_socket.shutdown(boost::asio::ip::tcp::socket::shutdown_both, ignored);
++	m_socket.close(ignored);
++	m_bridge->onSessionClosed(shared_from_this());
++}
++
++void DiscordBridgeSession::send(const std::string& message)
++{
++	if(m_closed)
++		return;
++
++	m_outgoing.push_back(message + "\n");
++	if(!m_writing)
++		writeNext();
++}
++
++void DiscordBridgeSession::writeNext()
++{
++	if(m_closed || m_outgoing.empty())
++		return;
++
++	m_writing = true;
++	boost::asio::async_write(m_socket, boost::asio::buffer(m_outgoing.front()),
++		boost::bind(&DiscordBridgeSession::handleWrite, shared_from_this(), boost::asio::placeholders::error));
++}
++
++void DiscordBridgeSession::handleWrite(const boost::system::error_code& error)
++{
++	m_writing = false;
++	if(!m_outgoing.empty())
++		m_outgoing.pop_front();
++
++	if(error)
++	{
++		close();
++		return;
++	}
++
++	if(!m_outgoing.empty())
++		writeNext();
++	else if(m_authenticated)
++		m_bridge->flush();
++}
++
++void DiscordBridgeSession::read()
++{
++	boost::asio::async_read_until(m_socket, m_buffer, '\n',
++		boost::bind(&DiscordBridgeSession::handleRead, shared_from_this(),
++			boost::asio::placeholders::error, boost::asio::placeholders::bytes_transferred));
++}
++
++void DiscordBridgeSession::handleRead(const boost::system::error_code& error, std::size_t bytes)
++{
++	if(m_closed)
++		return;
++
++	if(error)
++	{
++		// Also reached when a line exceeds MAX_LINE_LENGTH (streambuf full).
++		close();
++		return;
++	}
++
++	std::string line(boost::asio::buffers_begin(m_buffer.data()), boost::asio::buffers_begin(m_buffer.data()) + bytes);
++	m_buffer.consume(bytes);
++	while(!line.empty() && (line[line.size() - 1] == '\n' || line[line.size() - 1] == '\r'))
++		line.erase(line.size() - 1);
++
++	m_lastReceived = OTSYS_TIME();
++	if(!line.empty())
++		handleLine(line);
++
++	if(!m_closed)
++		read();
++}
++
++void DiscordBridgeSession::handleLine(const std::string& line)
++{
++	std::string type = messageType(line);
++	if(!m_authenticated)
++	{
++		if(type == "auth" && m_bridge->verifyAuth(m_nonce, jsonField(line, "hmac")))
++		{
++			m_authenticated = true;
++			m_bridge->onAuthenticated(shared_from_this());
++			return;
++		}
++
++		std::cout << "[Warning - DiscordBridge] Rejected a bridge connection: authentication failed." << std::endl;
++		send("{\"type\":\"error\",\"code\":\"auth_failed\",\"message\":\"Authentication failed.\"}");
++		boost::asio::post(m_bridge->getIoContext(), boost::bind(&DiscordBridgeSession::close, shared_from_this()));
++		return;
++	}
++
++	if(type == "ping")
++		send("{\"type\":\"pong\"}");
++	else if(type == "pong")
++		return;
++	else if(type.empty())
++		send("{\"type\":\"error\",\"code\":\"invalid_json\",\"message\":\"Messages must be JSON objects with a type.\"}");
++	else
++		m_bridge->onIncoming(line);
++}
++
++void DiscordBridgeSession::onTimer(const boost::system::error_code& error)
++{
++	if(error || m_closed)
++		return;
++
++	int64_t now = OTSYS_TIME();
++	if(!m_authenticated && now - m_connectedAt > AUTH_TIMEOUT)
++	{
++		close();
++		return;
++	}
++
++	if(m_authenticated && now - m_lastReceived > IDLE_TIMEOUT)
++	{
++		std::cout << "[Warning - DiscordBridge] Bot connection timed out." << std::endl;
++		close();
++		return;
++	}
++
++	if(m_authenticated && now - m_lastPing >= PING_INTERVAL)
++	{
++		m_lastPing = now;
++		send("{\"type\":\"ping\"}");
++	}
++
++	m_timer.expires_after(boost::asio::chrono::seconds(5));
++	m_timer.async_wait(boost::bind(&DiscordBridgeSession::onTimer, shared_from_this(), boost::asio::placeholders::error));
++}
+diff --git a/core/server/src/discordbridge.h b/core/server/src/discordbridge.h
+new file mode 100644
+index 0000000..702a949
+--- /dev/null
++++ b/core/server/src/discordbridge.h
+@@ -0,0 +1,141 @@
++////////////////////////////////////////////////////////////////////////
++// PokeVerse - local bridge for the PokeVerse-Discord companion bot
++////////////////////////////////////////////////////////////////////////
++// This program is free software: you can redistribute it and/or modify
++// it under the terms of the GNU General Public License as published by
++// the Free Software Foundation, either version 3 of the License, or
++// (at your option) any later version.
++//
++// This program is distributed in the hope that it will be useful,
++// but WITHOUT ANY WARRANTY; without even the implied warranty of
++// MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
++// GNU General Public License for more details.
++//
++// You should have received a copy of the GNU General Public License
++// along with this program.  If not, see <http://www.gnu.org/licenses/>.
++////////////////////////////////////////////////////////////////////////
++
++#ifndef __DISCORDBRIDGE__
++#define __DISCORDBRIDGE__
++#include "otsystem.h"
++#include "tools.h"
++
++#include <deque>
++#include <boost/enable_shared_from_this.hpp>
++
++// Newline-delimited JSON over TCP, authenticated with HMAC-SHA256 over a
++// per-connection nonce. The network runs on its own thread and io_context:
++// game code only appends to bounded in-memory queues and never waits for the bot.
++// Protocol and message contracts: docs/discord-bridge.md.
++
++#define DISCORD_BRIDGE_PROTOCOL_VERSION 1
++
++class DiscordBridgeSession;
++typedef boost::shared_ptr<DiscordBridgeSession> DiscordBridgeSession_ptr;
++
++struct DiscordBridgeStats
++{
++	DiscordBridgeStats(): queued(0), sent(0), dropped(0), received(0), rejected(0), connections(0) {}
++
++	uint64_t queued, sent, dropped, received, rejected, connections;
++};
++
++class DiscordBridge
++{
++	public:
++		virtual ~DiscordBridge() {}
++		static DiscordBridge* getInstance()
++		{
++			static DiscordBridge instance;
++			return &instance;
++		}
++
++		void start();
++		void stop();
++
++		bool isEnabled() const {return m_enabled;}
++		bool isConnected() const {return m_connected;}
++		const std::string& getBootId() const {return m_bootId;}
++		DiscordBridgeStats getStats();
++
++		// Any thread. Wraps the JSON object in an event envelope with a unique id and
++		// queues it; queued events survive bot reconnects (oldest dropped when full).
++		bool emitEvent(const std::string& payload);
++		// Any thread. Sends a raw JSON message only if a bot is connected right now.
++		bool sendMessage(const std::string& message);
++		// Dispatcher thread. Removes and returns up to max received messages.
++		StringVec takeIncoming(uint32_t max);
++
++		// Escapes a Latin-1 game string for a JSON string literal (bytes >= 0x80 become \u00XX).
++		static std::string escapeJson(const std::string& text);
++
++		// Network thread only.
++		boost::asio::io_context& getIoContext() {return m_io;}
++		bool verifyAuth(const std::string& nonce, const std::string& hexMac) const;
++		void onAuthenticated(DiscordBridgeSession_ptr session);
++		void onSessionClosed(DiscordBridgeSession_ptr session);
++		void onIncoming(const std::string& line);
++		void flush();
++
++	private:
++		DiscordBridge(): m_enabled(false), m_connected(false), m_running(false), m_dispatchPending(false),
++			m_maxQueue(2000), m_maxIncoming(500), m_sequence(0),
++			m_acceptor(m_io), m_work(boost::asio::make_work_guard(m_io)) {}
++
++		void networkThread();
++		void accept();
++		void handleAccept(DiscordBridgeSession_ptr session, const boost::system::error_code& error);
++		void dispatchIncoming();
++		bool hasPendingOutput();
++
++		volatile bool m_enabled, m_connected, m_running;
++		bool m_dispatchPending;
++		uint32_t m_maxQueue, m_maxIncoming;
++		uint64_t m_sequence;
++		std::string m_secret, m_bootId;
++
++		boost::mutex m_lock;
++		std::deque<std::string> m_events, m_direct, m_incoming;
++		DiscordBridgeStats m_stats;
++
++		boost::asio::io_context m_io;
++		boost::asio::ip::tcp::acceptor m_acceptor;
++		boost::asio::executor_work_guard<boost::asio::io_context::executor_type> m_work;
++		boost::thread m_thread;
++		DiscordBridgeSession_ptr m_active;
++};
++
++class DiscordBridgeSession : public boost::enable_shared_from_this<DiscordBridgeSession>
++{
++	public:
++		DiscordBridgeSession(DiscordBridge* bridge);
++		virtual ~DiscordBridgeSession() {}
++
++		boost::asio::ip::tcp::socket& getSocket() {return m_socket;}
++		void start();
++		void close();
++		bool isOpen() const {return !m_closed;}
++		bool isAuthenticated() const {return m_authenticated;}
++
++		// Messages are written one at a time in order; pending() counts unwritten ones.
++		void send(const std::string& message);
++		size_t pending() const {return m_outgoing.size();}
++
++	private:
++		void read();
++		void handleRead(const boost::system::error_code& error, std::size_t bytes);
++		void handleLine(const std::string& line);
++		void handleWrite(const boost::system::error_code& error);
++		void writeNext();
++		void onTimer(const boost::system::error_code& error);
++
++		DiscordBridge* m_bridge;
++		boost::asio::ip::tcp::socket m_socket;
++		boost::asio::steady_timer m_timer;
++		boost::asio::streambuf m_buffer;
++		std::string m_nonce;
++		bool m_authenticated, m_closed, m_writing;
++		int64_t m_connectedAt, m_lastReceived, m_lastPing;
++		std::deque<std::string> m_outgoing;
++};
++#endif
+diff --git a/core/server/src/game.cpp b/core/server/src/game.cpp
+index 1dcbc7f..8c4f24e 100644
+--- a/core/server/src/game.cpp
++++ b/core/server/src/game.cpp
+@@ -57,6 +57,7 @@
+ #include "group.h"
+ 
+ #include "tools.h"
++#include "discordbridge.h"
+ 
+ #ifdef __EXCEPTION_TRACER__
+ #include "exception.h"
+@@ -183,6 +184,10 @@ void Game::setGameState(GameState_t newState)
+ 	if(gameState != newState)
+ 	{
+ 		gameState = newState;
++		static const char* stateNames[] = {"", "startup", "init", "normal", "maintain", "closed", "closing", "shutdown"};
++		std::ostringstream event;
++		event << "{\"kind\":\"server_state\",\"state\":\"" << stateNames[newState] << "\",\"players\":" << getPlayersOnline() << "}";
++		DiscordBridge::getInstance()->emitEvent(event.str());
+ 		switch(newState)
+ 		{
+ 			case GAME_STATE_INIT:
+@@ -2376,6 +2381,11 @@ bool Game::playerBroadcastMessage(Player* player, SpeakClasses type, const std::
+ 
+ 	//TODO: event handling - onCreatureSay
+ 	std::cout << "> " << player->getName() << " broadcasted: \"" << text << "\"." << std::endl;
++
++	std::ostringstream event;
++	event << "{\"kind\":\"broadcast\",\"source\":\"gm\",\"author\":\"" << DiscordBridge::escapeJson(player->getName())
++		<< "\",\"text\":\"" << DiscordBridge::escapeJson(text) << "\"}";
++	DiscordBridge::getInstance()->emitEvent(event.str());
+ 	return true;
+ }
+ 
+@@ -6602,6 +6612,11 @@ bool Game::reloadInfo(ReloadInfo_t reload, uint32_t playerId/* = 0*/)
+ 
+ void Game::prepareGlobalSave()
+ {
++	int32_t minutesLeft = !globalSaveMessage[0] ? 5 : (!globalSaveMessage[1] ? 3 : (!globalSaveMessage[2] ? 1 : 0));
++	std::ostringstream event;
++	event << "{\"kind\":\"restart_warning\",\"reason\":\"global_save\",\"minutes\":" << minutesLeft
++		<< ",\"shutdown\":" << (g_config.getBool(ConfigManager::SHUTDOWN_AT_GLOBALSAVE) ? "true" : "false") << "}";
++	DiscordBridge::getInstance()->emitEvent(event.str());
+ 	if(!globalSaveMessage[0])
+ 	{
+ 		setGameState(GAME_STATE_CLOSING);
+@@ -6666,6 +6681,7 @@ void Game::globalSave()
+ 
+ void Game::shutdown()
+ {
++	DiscordBridge::getInstance()->stop();
+     std::cout << "Preparing";
+     if (g_config.getBool(ConfigManager::LOG_MAP_ITEMS)) {
+         logMapItems();
+diff --git a/core/server/src/globalevent.cpp b/core/server/src/globalevent.cpp
+index 7ca476e..8a573e4 100644
+--- a/core/server/src/globalevent.cpp
++++ b/core/server/src/globalevent.cpp
+@@ -163,6 +163,7 @@ GlobalEventMap GlobalEvents::getEventMap(GlobalEvent_t type)
+ 		case GLOBAL_EVENT_STARTUP:
+ 		case GLOBAL_EVENT_SHUTDOWN:
+ 		case GLOBAL_EVENT_RECORD:
++		case GLOBAL_EVENT_DISCORD_BRIDGE:
+ 		{
+ 			GlobalEventMap retMap;
+ 			for(GlobalEventMap::iterator it = serverMap.begin(); it != serverMap.end(); ++it)
+@@ -208,6 +209,8 @@ bool GlobalEvent::configureEvent(xmlNodePtr p)
+ 			m_eventType = GLOBAL_EVENT_SHUTDOWN;
+ 		else if(tmpStrValue == "record" || tmpStrValue == "playersrecord")
+ 			m_eventType = GLOBAL_EVENT_RECORD;
++		else if(tmpStrValue == "discordbridge")
++			m_eventType = GLOBAL_EVENT_DISCORD_BRIDGE;
+ 		else
+ 		{
+ 			std::cout << "[Error - GlobalEvent::configureEvent] No valid type \"" << strValue << "\" for globalevent with name " << m_name << std::endl;
+@@ -255,6 +258,8 @@ std::string GlobalEvent::getScriptEventName() const
+ 			return "onRecord";
+ 		case GLOBAL_EVENT_TIMER:
+ 			return "onTimer";
++		case GLOBAL_EVENT_DISCORD_BRIDGE:
++			return "onDiscordBridge";
+ 		default:
+ 			return "onThink";
+ 	}
+diff --git a/core/server/src/globalevent.h b/core/server/src/globalevent.h
+index e656844..450b80f 100644
+--- a/core/server/src/globalevent.h
++++ b/core/server/src/globalevent.h
+@@ -31,7 +31,8 @@ enum GlobalEvent_t
+ 
+ 	GLOBAL_EVENT_STARTUP,
+ 	GLOBAL_EVENT_SHUTDOWN,
+-	GLOBAL_EVENT_RECORD
++	GLOBAL_EVENT_RECORD,
++	GLOBAL_EVENT_DISCORD_BRIDGE
+ };
+ 
+ class GlobalEvent;
+diff --git a/core/server/src/luascript.cpp b/core/server/src/luascript.cpp
+index b78e392..da39893 100644
+--- a/core/server/src/luascript.cpp
++++ b/core/server/src/luascript.cpp
+@@ -52,6 +52,7 @@
+ #include "status.h"
+ #include "game.h"
+ #include "chat.h"
++#include "discordbridge.h"
+ 
+ extern Game g_game;
+ extern Monsters g_monsters;
+@@ -2004,6 +2005,18 @@ void LuaScriptInterface::registerFunctions()
+ 	//getWorldUpTime()
+ 	lua_register(m_luaState, "getWorldUpTime", LuaScriptInterface::luaGetWorldUpTime);
+ 
++	//doDiscordBridgeEmit(payloadJson)
++	lua_register(m_luaState, "doDiscordBridgeEmit", LuaScriptInterface::luaDoDiscordBridgeEmit);
++
++	//doDiscordBridgeSend(messageJson)
++	lua_register(m_luaState, "doDiscordBridgeSend", LuaScriptInterface::luaDoDiscordBridgeSend);
++
++	//getDiscordBridgeMessages([max = 50])
++	lua_register(m_luaState, "getDiscordBridgeMessages", LuaScriptInterface::luaGetDiscordBridgeMessages);
++
++	//getDiscordBridgeInfo()
++	lua_register(m_luaState, "getDiscordBridgeInfo", LuaScriptInterface::luaGetDiscordBridgeInfo);
++
+ 	//getGuildId(guildName)
+ 	lua_register(m_luaState, "getGuildId", LuaScriptInterface::luaGetGuildId);
+ 
+@@ -6083,6 +6096,57 @@ int32_t LuaScriptInterface::luaGetWorldUpTime(lua_State* L)
+ 	return 1;
+ }
+ 
++int32_t LuaScriptInterface::luaDoDiscordBridgeEmit(lua_State* L)
++{
++	//doDiscordBridgeEmit(payloadJson)
++	lua_pushboolean(L, DiscordBridge::getInstance()->emitEvent(popString(L)));
++	return 1;
++}
++
++int32_t LuaScriptInterface::luaDoDiscordBridgeSend(lua_State* L)
++{
++	//doDiscordBridgeSend(messageJson)
++	lua_pushboolean(L, DiscordBridge::getInstance()->sendMessage(popString(L)));
++	return 1;
++}
++
++int32_t LuaScriptInterface::luaGetDiscordBridgeMessages(lua_State* L)
++{
++	//getDiscordBridgeMessages([max = 50])
++	uint32_t max = 50;
++	if(lua_gettop(L) > 0)
++		max = std::max((uint32_t)1, (uint32_t)popNumber(L));
++
++	StringVec messages = DiscordBridge::getInstance()->takeIncoming(max);
++	lua_newtable(L);
++	for(uint32_t i = 0; i < messages.size(); ++i)
++	{
++		lua_pushnumber(L, i + 1);
++		lua_pushstring(L, messages[i].c_str());
++		pushTable(L);
++	}
++
++	return 1;
++}
++
++int32_t LuaScriptInterface::luaGetDiscordBridgeInfo(lua_State* L)
++{
++	//getDiscordBridgeInfo()
++	DiscordBridge* bridge = DiscordBridge::getInstance();
++	DiscordBridgeStats stats = bridge->getStats();
++	lua_newtable(L);
++	setFieldBool(L, "enabled", bridge->isEnabled());
++	setFieldBool(L, "connected", bridge->isConnected());
++	setField(L, "bootId", bridge->getBootId());
++	setFieldFloat(L, "queued", (double)stats.queued);
++	setFieldFloat(L, "sent", (double)stats.sent);
++	setFieldFloat(L, "dropped", (double)stats.dropped);
++	setFieldFloat(L, "received", (double)stats.received);
++	setFieldFloat(L, "rejected", (double)stats.rejected);
++	setFieldFloat(L, "connections", (double)stats.connections);
++	return 1;
++}
++
+ int32_t LuaScriptInterface::luaGetPlayerLight(lua_State* L)
+ {
+ 	//getPlayerLight(cid)
+diff --git a/core/server/src/luascript.h b/core/server/src/luascript.h
+index 9f261e9..dbc8d82 100644
+--- a/core/server/src/luascript.h
++++ b/core/server/src/luascript.h
+@@ -575,6 +575,10 @@ class LuaScriptInterface
+ 		static int32_t luaGetWorldLightState(lua_State* L);
+ 		static int32_t luaGetWorldCreatures(lua_State* L);
+ 		static int32_t luaGetWorldUpTime(lua_State* L);
++		static int32_t luaDoDiscordBridgeEmit(lua_State* L);
++		static int32_t luaDoDiscordBridgeSend(lua_State* L);
++		static int32_t luaGetDiscordBridgeMessages(lua_State* L);
++		static int32_t luaGetDiscordBridgeInfo(lua_State* L);
+ 		static int32_t luaGetGuildId(lua_State* L);
+ 		static int32_t luaGetGuildMotd(lua_State* L);
+ 		static int32_t luaIsPlayerPzLocked(lua_State* L);
+diff --git a/core/server/src/otserv.cpp b/core/server/src/otserv.cpp
+index bf35ee2..287c6f9 100644
+--- a/core/server/src/otserv.cpp
++++ b/core/server/src/otserv.cpp
+@@ -41,6 +41,7 @@
+ #include "protocolgame.h"
+ #include "protocolold.h"
+ #include "status.h"
++#include "discordbridge.h"
+ #ifdef __REMOTE_CONTROL__
+ #include "admin.h"
+ #endif
+@@ -844,6 +845,7 @@ ServiceManager* services)
+ 	#if defined(WINDOWS) && !defined(__CONSOLE__)
+ 	SendMessage(GUI::getInstance()->m_statusBar, WM_SETTEXT, 0, (LPARAM)">> Initializing game state and registering services...");
+ 	#endif
++	DiscordBridge::getInstance()->start();
+ 	g_game.setGameState(GAME_STATE_INIT);
+ 
+ 	std::string ip = g_config.getString(ConfigManager::IP);
+-- 
+2.43.0
+

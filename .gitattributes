@@ -4,3 +4,6 @@
 *.ps1 text eol=crlf
 scripts/windows/README.txt text eol=crlf
 *.png binary
+
+# Game patches must keep their exact bytes (CRLF lines in the patched files).
+integrations/pokeverse-game/patches/*.patch -text
