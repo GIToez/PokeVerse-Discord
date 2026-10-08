@@ -42,6 +42,16 @@ class Player:
         self.running = True
         self.thread = threading.Thread(target=self.reader, daemon=True)
         self.thread.start()
+        threading.Thread(target=self.keepalive, daemon=True).start()
+
+    def keepalive(self):
+        # The server logs out clients that never answer its pings after a few idle minutes.
+        while self.running:
+            time.sleep(10)
+            try:
+                self.send(b"\x1e")
+            except Exception:
+                break
 
     def reader(self):
         self.conn.sock.settimeout(0.5)
