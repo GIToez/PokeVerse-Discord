@@ -96,7 +96,7 @@ through the Discord API:
 - `#shiny-spawns` / `#legendary-spawns`: Shiny Rattata and Mewtwo, each in its own channel,
   "near Pewter", artwork attached.
 - `#game-announcements`: a GM `/b` broadcast, once.
-- `#game-chat`: `[Game] Live Staff: ... @​everyone` with the mention defused
+- `#game-chat`: `[Game] Live Staff: ... @everyone` with the mention defused
   (`mention_everyone: false`) and link previews suppressed. A level 5 character could not
   write in Game-Chat at all: the game requires level 10 for that channel, so nothing reaches
   the bridge.
