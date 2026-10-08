@@ -90,7 +90,7 @@ Generate a secret with `node -e "console.log(require('crypto').randomBytes(32).t
 | Message | Fix |
 | --- | --- |
 | `Discord rejected the bot token` | Reset the token in the Developer Portal and run the configure script again. |
-| `Used disallowed intents` | Enable Message Content in Developer Portal > Bot > Privileged Gateway Intents. |
+| `Discord refused the Message Content intent` | Enable Message Content in Developer Portal > Bot > Privileged Gateway Intents. The `setup` command works without it; `start` needs it for the chat relay. |
 | `The bot is not a member of guild ...` | Use the printed invite link. |
 | `The game server is not reachable yet` | Start the game server; check `config.local.lua`. The bot keeps retrying. |
 | `auth_failed` | `BRIDGE_SECRET` and `discordBridgeSecret` differ. |
