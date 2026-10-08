@@ -179,8 +179,10 @@ if ($serverDir) {
   Protect-File $luaFile
   Write-Host "Wrote the bridge settings to $luaFile" -ForegroundColor Green
   if (-not $artwork) {
-    $pictures = Join-Path (Split-Path -Parent $serverDir) "client-legacy-windows\data\images\pictures"
-    if (Test-Path $pictures) { $artwork = $pictures }
+    foreach ($client in @("client-legacy-windows", "client-legacy")) {
+      $pictures = Join-Path (Split-Path -Parent $serverDir) "$client\data\images\pictures"
+      if (Test-Path $pictures) { $artwork = $pictures; break }
+    }
   }
 } else {
   Write-Host "Game server folder not found. Add these lines to config.local.lua next to the game's config.lua:" -ForegroundColor Yellow
