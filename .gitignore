@@ -14,3 +14,4 @@ logs/
 !.env.development.example
 !.env.production.example
 config.local.lua
+.cache/

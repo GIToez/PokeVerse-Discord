@@ -1,0 +1,151 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  NODE_VERSION: "22"
+
+jobs:
+  check:
+    name: Typecheck, lint, test, build (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+      - run: npm ci
+      - run: npm run typecheck
+      - run: npm run lint
+      - run: npm test
+      - run: npm run build
+      - name: CLI smoke test
+        shell: bash
+        run: |
+          node dist/bot.cjs --help
+          set +e
+          node dist/bot.cjs check-config --config-dir "$RUNNER_TEMP"
+          code=$?
+          set -e
+          test "$code" = "2"
+
+  package-windows:
+    name: Windows development package
+    needs: check
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+      - run: npm ci
+      - run: npm run package:windows
+      - uses: actions/upload-artifact@v4
+        with:
+          name: PokeVerse-Discord-Dev-Windows
+          path: builds/dev/pokeverse-discord-dev-windows-x64/
+          include-hidden-files: true
+          if-no-files-found: error
+          retention-days: 30
+
+  test-windows-package:
+    name: Test the Windows package on a clean runner
+    needs: package-windows
+    runs-on: windows-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: PokeVerse-Discord-Dev-Windows
+          path: ${{ runner.temp }}\bot
+      - name: Package contents and no secrets
+        shell: pwsh
+        working-directory: ${{ runner.temp }}\bot
+        run: |
+          foreach ($f in "node\node.exe","node\LICENSE","bot\bot.cjs","start-discord-dev.bat","configure-discord-dev.ps1","download-discord-dev.ps1",".env.development.example","THIRD_PARTY_LICENSES.txt") {
+            if (-not (Test-Path $f)) { throw "missing $f" }
+          }
+          if (Get-ChildItem -Force -Recurse -Include ".env",".env.development",".env.production","config.local.lua") { throw "package contains configuration with secrets" }
+          & .\node\node.exe --version
+          & .\node\node.exe bot\bot.cjs --help
+      - name: Configure non-interactively with a fake game server folder
+        shell: pwsh
+        working-directory: ${{ runner.temp }}\bot
+        env:
+          # Syntactically valid, not a real token.
+          POKEVERSE_DISCORD_TOKEN: MTAwMDAwMDAwMDAwMDAwMDAwMQ.GabcDE.fake-token-for-ci-tests-only-xxxxxxxxx
+        run: |
+          $game = Join-Path $env:RUNNER_TEMP "PokeVerse-Windows-Dev\server-windows"
+          New-Item -ItemType Directory -Force $game | Out-Null
+          Set-Content -Path (Join-Path $game "config.lua") -Value 'discordBridgeEnabled = false'
+          & .\configure-discord-dev.ps1 -NonInteractive -GuildId 100000000000000001 -ApplicationId 100000000000000002 -GameDir (Split-Path $game) -SkipBridgeCheck
+          if ($LASTEXITCODE -ne 0) { throw "configure failed" }
+          $lua = Get-Content (Join-Path $game "config.local.lua") -Raw
+          if ($lua -notmatch 'discordBridgeEnabled = true' -or $lua -notmatch 'discordBridgeSecret = "[0-9a-f]{64}"') { throw "config.local.lua not written" }
+          $envText = Get-Content .env.development -Raw
+          $secret = [regex]::Match($lua, 'discordBridgeSecret = "([0-9a-f]{64})"').Groups[1].Value
+          if ($envText -notmatch "BRIDGE_SECRET=$secret") { throw "secrets differ" }
+          & .\node\node.exe bot\bot.cjs check-config --profile development --config-dir .
+          if ($LASTEXITCODE -ne 0) { throw "check-config failed" }
+      - name: Start script reports errors clearly (fake token, no game server)
+        shell: cmd
+        working-directory: ${{ runner.temp }}\bot
+        env:
+          PV_NO_PAUSE: "1"
+        run: |
+          call start-discord-dev.bat > start.log 2>&1
+          type start.log
+          findstr /C:"The game server is not reachable yet" start.log || exit /b 1
+          findstr /C:"Discord rejected the bot token" start.log || findstr /C:"Could not connect to Discord" start.log || exit /b 1
+          findstr /C:"The bot stopped with an error" start.log || exit /b 1
+          exit /b 0
+
+  package-linux:
+    name: Linux production package
+    needs: check
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+      - run: npm ci
+      - run: npm run package:linux
+      - name: Smoke test the extracted package
+        run: |
+          dir=$(mktemp -d)
+          tar -xzf builds/production/pokeverse-discord-linux-x64.tar.gz -C "$dir"
+          cd "$dir/pokeverse-discord-linux-x64"
+          test ! -e .env.production
+          ./node/bin/node --version
+          set +e; ./start-discord.sh check-config; code=$?; set -e
+          test "$code" = "2"
+          cp .env.production.example .env.production
+          sed -i 's/^DISCORD_TOKEN=.*/DISCORD_TOKEN=fake.ci.token/; s/^DISCORD_GUILD_ID=.*/DISCORD_GUILD_ID=100000000000000999/; s/^BRIDGE_SECRET=.*/BRIDGE_SECRET=0123456789abcdef0123/' .env.production
+          set +e; ./start-discord.sh check-config; code=$?; set -e
+          test "$code" = "2"   # refused without POKEVERSE_CONFIRM_PRODUCTION=yes
+          sed -i 's/^POKEVERSE_CONFIRM_PRODUCTION=.*/POKEVERSE_CONFIRM_PRODUCTION=yes/' .env.production
+          ./start-discord.sh check-config
+      - uses: actions/upload-artifact@v4
+        with:
+          name: PokeVerse-Discord-Linux-Production
+          path: builds/production/pokeverse-discord-linux-x64.tar.gz
+          if-no-files-found: error
+          retention-days: 30

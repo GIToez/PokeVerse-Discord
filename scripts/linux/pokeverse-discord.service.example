@@ -1,0 +1,29 @@
+# Example systemd unit for the production bot. Review before use; nothing installs it automatically.
+#   sudo cp pokeverse-discord.service.example /etc/systemd/system/pokeverse-discord.service
+#   sudo systemctl daemon-reload && sudo systemctl enable --now pokeverse-discord
+#
+# The bot is independent of the game server: restarting the game does not restart the bot,
+# and the bot reconnects to the game bridge on its own.
+[Unit]
+Description=PokeVerse Discord bot
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=pokeverse
+Group=pokeverse
+WorkingDirectory=/opt/pokeverse-discord
+ExecStart=/opt/pokeverse-discord/start-discord.sh start
+Restart=on-failure
+RestartSec=10
+# Hardening
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/opt/pokeverse-discord/data /opt/pokeverse-discord/logs
+MemoryMax=512M
+
+[Install]
+WantedBy=multi-user.target
