@@ -15,6 +15,7 @@ import type {
   RoleInfo,
 } from "../../src/bot/ports.js";
 import { loadConfig, type BotConfig } from "../../src/config/load.js";
+import type { ChannelSetup, SetupReport } from "../../src/setup/channelSetup.js";
 import { BridgeRequestError, BridgeUnavailableError } from "../../src/integrations/pokeverse/bridgeClient.js";
 import type { AdminApi, GameApi, LinkApi } from "../../src/integrations/pokeverse/gameApi.js";
 import {
@@ -457,6 +458,22 @@ export class FakeAdminApi implements AdminApi {
     }
     return this.sessionsResult;
   }
+}
+
+/**
+ * Runs channel setup (as /pokeverse setup does) on a fake guild and gives the created
+ * channels the ids of the in-memory channels, so privacy checks see the real overwrites.
+ */
+export async function setUpGuild(setup: ChannelSetup, guild: FakeGuild, channels: FakeChannels): Promise<SetupReport> {
+  const report = await setup.run(guild);
+  for (const item of report.channels) {
+    const sink = channels.get(item.purpose);
+    const created = guild.channels.find((channel) => channel.id === item.channelId);
+    if (sink && created) {
+      created.id = sink.id;
+    }
+  }
+  return report;
 }
 
 export const RATTATA: Extract<PokemonResult, { found: true }> = {

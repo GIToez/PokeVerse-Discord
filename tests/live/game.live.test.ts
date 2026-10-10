@@ -9,7 +9,7 @@ import type { CommandInput } from "../../src/commands/router.js";
 import { silentLogger } from "../../src/utils/logger.js";
 import { Metrics } from "../../src/utils/metrics.js";
 import { waitFor } from "../helpers/fakeBridgeServer.js";
-import { DEV_GUILD, FakeChannels, FakeGuild, makeConfig, makeStore } from "../helpers/fakes.js";
+import { DEV_GUILD, FakeChannels, FakeGuild, makeConfig, makeStore, setUpGuild } from "../helpers/fakes.js";
 
 /**
  * Runs the bot's real pipeline (BridgeClient, services, command router) against a real
@@ -21,6 +21,9 @@ const live = port && secret && process.env.PV_GAME_REPO ? describe : describe.sk
 
 const TRAINER = { account: "livetrainer", password: "secret", character: "Live Trainer" };
 const STAFF = { account: "livestaff", password: "secret", character: "Live Staff" };
+/** Two characters, "Live Linker" created first; scripts/live-test.sh gives the account premium days. */
+const LINKER = { account: "livelink", password: "secret", character: "Live Second" };
+const LINK_USER = "1234567890123456789";
 
 class GameActor {
   private readonly process: ChildProcessWithoutNullStreams;
@@ -67,6 +70,16 @@ live("live: bot against the real PokeVerse game server", () => {
   let integration: GameIntegration;
   let channels: FakeChannels;
   let actor: GameActor;
+  let guild: FakeGuild;
+  const fieldsOf = (embed: { fields?: Array<{ name: string; value: string }> } | undefined) =>
+    Object.fromEntries((embed?.fields ?? []).map((field) => [field.name, field.value]));
+  const activity = () => embeds("playerActivity");
+  const linkCommand = (commandName: string, options: Record<string, string> = {}): CommandInput => ({
+    commandName,
+    options,
+    user: { id: LINK_USER, displayName: "Linker", roleIds: [], manageGuild: false },
+    guildId: DEV_GUILD,
+  });
   const embeds = (purpose: Parameters<FakeChannels["channel"]>[0]) =>
     channels.channel(purpose).sent.map((item) => item.message.embeds?.[0]);
 
@@ -76,9 +89,15 @@ live("live: bot against the real PokeVerse game server", () => {
       BRIDGE_SECRET: secret!,
       POKEMON_ARTWORK_DIR: process.env.PV_LIVE_ARTWORK ?? "",
       SPAWN_LOCATION_MODE: "coordinates",
+      DISCORD_ADMIN_USER_IDS: "700000000000000001",
     });
     channels = new FakeChannels();
-    integration = new GameIntegration({ config, store: makeStore(config), channels, guild: () => new FakeGuild(), logger: silentLogger, metrics: new Metrics() });
+    guild = new FakeGuild();
+    guild.permissions = [...guild.permissions, "ManageRoles", "ManageNicknames"];
+    guild.addMember(LINK_USER);
+    integration = new GameIntegration({ config, store: makeStore(config), channels, guild: () => guild, logger: silentLogger, metrics: new Metrics() });
+    const report = await setUpGuild(integration.setup, guild, channels);
+    expect(report.ok).toBe(true);
     integration.start();
     await waitFor(() => integration.game.connected, 15_000, "bridge connection");
 
@@ -216,6 +235,88 @@ live("live: bot against the real PokeVerse game server", () => {
     expect(matching[0]!.message.embeds![0]!.footer?.text).toBe(`From ${STAFF.character}`);
   });
 
+  it("posts real logins to the private #player-activity channel", async () => {
+    expect(integration.bridge.hasFeature("playerSessions")).toBe(true);
+    await waitFor(() => activity().filter((embed) => embed?.title === "Login").length >= 2, 10_000, "login embeds");
+    const login = activity().find((embed) => embed?.title === "Login" && fieldsOf(embed).Character === TRAINER.character)!;
+    const fields = fieldsOf(login);
+    console.log("[live] login embed:", JSON.stringify(fields));
+    expect(fields.Account).toMatch(/^#\d+$/);
+    expect(fields["IP address"]).toBe("`127.0.0.1`");
+    expect(fields["Location (approximate)"]).toBe("No location (this machine (loopback))");
+    expect(fields.Session).toMatch(new RegExp(`^${integration.bridge.bootId}-`));
+    expect(Number(fields["Players online"])).toBeGreaterThanOrEqual(1);
+    expect(activity().filter((embed) => embed?.title === "Login" && fieldsOf(embed).Character === TRAINER.character)).toHaveLength(1);
+  });
+
+  it("links a real game account with a code from !discord link, then syncs roles and nickname", async () => {
+    expect(integration.linking!.available).toBe(true);
+    await actor.call("login", { player: "linker", ...LINKER });
+    const reply = await actor.call("command", { player: "linker", text: "!discord link" });
+    const code = /link code is ([0-9A-Z]{4}-[0-9A-Z]{4})/.exec(String(reply.text))?.[1];
+    expect(code, String(reply.text)).toBeDefined();
+
+    const wrong = await integration.commands.handle(linkCommand("link", { code: "AAAA-AAAA" }));
+    expect(wrong.message.embeds![0]!.description).toMatch(/not valid/);
+    const linked = await integration.commands.handle(linkCommand("link", { code: code!.toLowerCase().replace("-", " ") }));
+    console.log("[live] /link reply:", linked.message.embeds![0]!.description);
+    expect(linked.message.embeds![0]!.description).toMatch(/now linked/);
+    expect(linked.message.embeds![0]!.description).toContain("Main character: **Live Linker**");
+    const member = guild.members.get(LINK_USER)!;
+    const roles = integration.linking!.roleIds();
+    expect(member.roleIds).toEqual([roles.verified, roles.premium]);
+    expect(member.nickname).toBe("Live Linker");
+    const reused = await integration.commands.handle(linkCommand("link", { code: code! }));
+    expect(reused.message.embeds![0]!.description).toMatch(/already linked/);
+
+    const status = await actor.call("command", { player: "linker", text: "!discord status" });
+    expect(String(status.text)).toContain("is linked to Discord since");
+  });
+
+  it("/account, /characters and /main use the real account data", async () => {
+    const account = await integration.commands.handle(linkCommand("account"));
+    const fields = fieldsOf(account.message.embeds![0]);
+    console.log("[live] /account fields:", JSON.stringify(fields));
+    expect(fields.Characters).toBe("2");
+    expect(fields.Premium).toMatch(/^Yes \(\d+ days left\)$/);
+    expect(fields["Main character"]).toMatch(/^Live Linker \(level \d+/);
+
+    const characters = await integration.commands.handle(linkCommand("characters"));
+    const list = characters.message.embeds![0]!.description!;
+    expect(list).toMatch(/\*\*Live Linker\*\*: level \d+.*\(main\)/);
+    expect(list).toMatch(/\*\*Live Second\*\*: level \d+.*\(online\)/);
+    expect(await integration.commands.autocomplete("main", "character", "second", LINK_USER)).toEqual([
+      expect.objectContaining({ value: "Live Second" }),
+    ]);
+
+    const other = await integration.commands.handle(linkCommand("main", { character: TRAINER.character }));
+    expect(other.message.embeds![0]!.description).toMatch(/not on your linked account/);
+    const main = await integration.commands.handle(linkCommand("main", { character: "Live Second" }));
+    expect(main.message.embeds![0]!.description).toContain("Main character set to **Live Second**");
+    expect(guild.members.get(LINK_USER)!.nickname).toBe("Live Second");
+  });
+
+  it("posts a real logout with the reported reason", async () => {
+    await actor.call("logout", { player: "linker" });
+    await waitFor(() => activity().some((embed) => embed?.title === "Logout" && fieldsOf(embed).Character === LINKER.character), 10_000, "logout embed");
+    const fields = fieldsOf(activity().find((embed) => embed?.title === "Logout" && fieldsOf(embed).Character === LINKER.character));
+    console.log("[live] logout embed:", JSON.stringify(fields));
+    expect(fields.Reason).toBe("Logged out");
+    expect(fields["Session length"]).toBeTruthy();
+  });
+
+  it("removes the roles and nickname after an in-game unlink", async () => {
+    await actor.call("login", { player: "linker2", ...LINKER });
+    const first = await actor.call("command", { player: "linker2", text: "!discord unlink" });
+    expect(String(first.text)).toContain("!discord unlink confirm");
+    const done = await actor.call("command", { player: "linker2", text: "!discord unlink confirm" });
+    expect(String(done.text)).toContain("no longer linked");
+    await waitFor(() => guild.members.get(LINK_USER)!.roleIds.length === 0, 10_000, "roles removed");
+    await waitFor(() => guild.members.get(LINK_USER)!.nickname === null, 10_000, "nickname reset");
+    const account = await integration.commands.handle(linkCommand("account"));
+    expect(account.message.embeds![0]!.description).toMatch(/not linked/);
+  });
+
   it("reconnects after losing the bridge connection and keeps working", async () => {
     const bootId = integration.bridge.bootId;
     // A second authenticated client replaces the bot's connection on the real server.
@@ -244,6 +345,10 @@ live("live: bot against the real PokeVerse game server", () => {
     const marker = `again${Date.now()}`;
     await actor.call("say_channel", { player: "staff", channel: 7, text: marker });
     await waitFor(() => channels.channel("gameChat").contents().some((line) => line.includes(marker)), 5000, "chat after reconnect");
+    // A bridge reconnect is not a logout: open sessions stay open.
+    await sleep(4000);
+    await integration.idle();
+    expect(activity().filter((embed) => embed?.title?.startsWith("Session ended"))).toHaveLength(0);
   });
 
   it("posts restart warnings and their cancellation", async () => {

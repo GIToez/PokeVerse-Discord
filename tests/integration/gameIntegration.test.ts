@@ -5,7 +5,7 @@ import { Metrics } from "../../src/utils/metrics.js";
 import { FakeBridgeServer, waitFor } from "../helpers/fakeBridgeServer.js";
 import type { LinkSummary } from "../../src/integrations/pokeverse/protocol.js";
 import type { StateStore } from "../../src/utils/stateStore.js";
-import { DEV_GUILD, FakeChannels, FakeGuild, LINKED_USER, RATTATA, TRAINER, linkSummary, makeConfig, makeStore } from "../helpers/fakes.js";
+import { DEV_GUILD, FakeChannels, FakeGuild, LINKED_USER, RATTATA, TRAINER, linkSummary, makeConfig, makeStore, setUpGuild } from "../helpers/fakes.js";
 
 const SECRET = "integration-secret-0123456789";
 const cleanup: Array<() => Promise<void> | void> = [];
@@ -181,11 +181,8 @@ async function phase2(
   const guild = new FakeGuild();
   guild.permissions = [...guild.permissions, "ManageRoles", "ManageNicknames"];
   const integration = new GameIntegration({ config, store, channels, guild: () => guild, logger: silentLogger, metrics: new Metrics(), reconnectSyncDelayMs: 50 });
-  // What /pokeverse setup creates: the private channel and the roles.
-  const report = await integration.setup.run(guild);
-  const activityId = report.channels.find((channel) => channel.purpose === "playerActivity")!.channelId!;
+  await setUpGuild(integration.setup, guild, channels);
   const sink = channels.channel("playerActivity");
-  guild.channels.find((channel) => channel.id === activityId)!.id = sink.id;
   options.before?.(guild, links, store);
   integration.start();
   cleanup.push(() => integration.stop());

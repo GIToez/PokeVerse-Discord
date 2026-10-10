@@ -56,7 +56,10 @@ done
 $db -upokeverse -ppokeverse pokeverse -e "
   CALL pokeverse_create_account('livetrainer', 'secret'); CALL pokeverse_create_character('livetrainer', 'Live Trainer', 0);
   CALL pokeverse_create_account('livestaff', 'secret'); CALL pokeverse_create_character('livestaff', 'Live Staff', 0);
-  CALL pokeverse_set_group('Live Staff', 6);"
+  CALL pokeverse_set_group('Live Staff', 6);
+  CALL pokeverse_create_account('livelink', 'secret'); CALL pokeverse_create_character('livelink', 'Live Linker', 0);
+  CALL pokeverse_create_character('livelink', 'Live Second', 0);
+  UPDATE accounts SET premdays = 5, lastday = UNIX_TIMESTAMP() WHERE name = 'livelink';"
 
 echo "=== Game server"
 mkdir -p "$work/server/logs/server" "$work/server/logs/chat" "$work/server/logs/bots"

@@ -10,6 +10,8 @@ Commands: {"id", "op", ...}
   say          player, text
   say_channel  player, channel, text
   wait_for     player, needle, timeout  -> {"found": bool}
+  command      player, text, seconds    -> {"text": everything the server sent meanwhile}
+  logout       player (normal logout, like the client's logout button)
   clear        player
   quit
 """
@@ -78,6 +80,15 @@ class Player:
             time.sleep(0.1)
         return False
 
+    def command(self, text, seconds):
+        with self.lock:
+            start = len(self.packets)
+        self.send(struct.pack("<BB", 0x96, 1) + pt.pstr(text))
+        time.sleep(seconds)
+        with self.lock:
+            # Replies can be bundled with other packets, so search everything received.
+            return b"\n".join(self.packets[start:]).decode("latin-1")
+
     def close(self):
         self.running = False
         self.conn.close()
@@ -110,6 +121,10 @@ def handle(command):
         needle = (pt.pstr(command["author"]) + struct.pack("<HBH", 0, command.get("speakClass", 7), command["channel"])
                   + pt.pstr(command["text"]))
         return {"found": player.wait_for(needle, command.get("timeout", 5))}
+    elif op == "command":
+        return {"text": player.command(command["text"], command.get("seconds", 1.5))}
+    elif op == "logout":
+        player.send(b"\x14")
     elif op == "clear":
         with player.lock:
             player.packets.clear()
