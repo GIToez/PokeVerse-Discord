@@ -1,0 +1,842 @@
+From c611da891c430c4ffeffa3313364b28cd66d20a1 Mon Sep 17 00:00:00 2001
+From: Cursor Agent <cursoragent@cursor.com>
+Date: Sat, 10 Oct 2026 16:47:16 +0000
+Subject: [PATCH 1/4] Discord bridge: admin player session events, account link
+ codes and character change events
+
+---
+ core/server/config.lua                    |   6 +
+ core/server/src/configmanager.cpp         |   4 +
+ core/server/src/configmanager.h           |   4 +
+ core/server/src/discordbridge.cpp         | 202 +++++++++++++++++++++-
+ core/server/src/discordbridge.h           |  47 ++++-
+ core/server/src/discordbridgesessions.cpp | 137 +++++++++++++++
+ core/server/src/game.cpp                  |   4 +
+ core/server/src/luascript.cpp             |  81 +++++++++
+ core/server/src/luascript.h               |   5 +
+ core/server/src/player.cpp                |   8 +
+ core/server/src/protocolaccount.cpp       |   3 +
+ core/server/src/protocolgame.cpp          |  15 +-
+ core/server/src/protocolgame.h            |   4 +
+ 13 files changed, 517 insertions(+), 3 deletions(-)
+ create mode 100644 core/server/src/discordbridgesessions.cpp
+
+diff --git a/core/server/config.lua b/core/server/config.lua
+index f0b804e..56ff563 100644
+--- a/core/server/config.lua
++++ b/core/server/config.lua
+@@ -350,6 +350,12 @@
+ 	discordBridgeSecret = ""
+ 	discordBridgeQueueSize = 2000
+ 	discordBridgeAllowRemote = false
++	-- Admin-only login/logout events for the bot's private #player-activity channel.
++	-- discordBridgeSessionIps = false leaves IP addresses out of those events.
++	discordBridgePlayerSessions = true
++	discordBridgeSessionIps = true
++	-- Discord account linking (!discord link in game, /link in Discord).
++	discordBridgeAccountLinking = true
+ 
+ 	-- Daily game server restart with in-game warnings (30, 15, 10, 5 and 1 minutes, then 30 and
+ 	-- 10 seconds). Players, Pokemon, items and the world are saved before the server stops;
+diff --git a/core/server/src/configmanager.cpp b/core/server/src/configmanager.cpp
+index 807b15a..828fc62 100644
+--- a/core/server/src/configmanager.cpp
++++ b/core/server/src/configmanager.cpp
+@@ -327,10 +327,14 @@ bool ConfigManager::load()
+ 	m_confNumber[TOURNAMENT_WEEK_WINNER_STORAGE] = getGlobalNumber("tournamentWeekWinnerStorage", 7065);
+ 	m_confBool[DISCORD_BRIDGE_ENABLED] = getGlobalBool("discordBridgeEnabled", false);
+ 	m_confBool[DISCORD_BRIDGE_ALLOW_REMOTE] = getGlobalBool("discordBridgeAllowRemote", false);
++	m_confBool[DISCORD_BRIDGE_PLAYER_SESSIONS] = getGlobalBool("discordBridgePlayerSessions", true);
++	m_confBool[DISCORD_BRIDGE_SESSION_IPS] = getGlobalBool("discordBridgeSessionIps", true);
++	m_confBool[DISCORD_BRIDGE_ACCOUNT_LINKING] = getGlobalBool("discordBridgeAccountLinking", true);
+ 	m_confString[DISCORD_BRIDGE_HOST] = getGlobalString("discordBridgeHost", "127.0.0.1");
+ 	m_confString[DISCORD_BRIDGE_SECRET] = getGlobalString("discordBridgeSecret", "");
+ 	m_confNumber[DISCORD_BRIDGE_PORT] = getGlobalNumber("discordBridgePort", 7199);
+ 	m_confNumber[DISCORD_BRIDGE_QUEUE_SIZE] = getGlobalNumber("discordBridgeQueueSize", 2000);
++	m_confNumber[DISCORD_BRIDGE_LINK_CODE_LIFETIME] = getGlobalNumber("discordBridgeLinkCodeLifetime", 600);
+ 
+ 	m_loaded = true;
+ 	return true;
+diff --git a/core/server/src/configmanager.h b/core/server/src/configmanager.h
+index 2dcb10f..24d3eeb 100644
+--- a/core/server/src/configmanager.h
++++ b/core/server/src/configmanager.h
+@@ -172,6 +172,7 @@ class ConfigManager
+ 			TOURNAMENT_WEEK_WINNER_STORAGE,
+ 			DISCORD_BRIDGE_PORT,
+ 			DISCORD_BRIDGE_QUEUE_SIZE,
++			DISCORD_BRIDGE_LINK_CODE_LIFETIME,
+ 			LAST_NUMBER_CONFIG /* this must be the last one */
+ 		};
+ 
+@@ -284,6 +285,9 @@ class ConfigManager
+ 			LOG_MAP_ITEMS,
+ 			DISCORD_BRIDGE_ENABLED,
+ 			DISCORD_BRIDGE_ALLOW_REMOTE,
++			DISCORD_BRIDGE_PLAYER_SESSIONS,
++			DISCORD_BRIDGE_SESSION_IPS,
++			DISCORD_BRIDGE_ACCOUNT_LINKING,
+ 			LAST_BOOL_CONFIG /* this must be the last one */
+ 		};
+ 
+diff --git a/core/server/src/discordbridge.cpp b/core/server/src/discordbridge.cpp
+index 43201e2..452cf43 100644
+--- a/core/server/src/discordbridge.cpp
++++ b/core/server/src/discordbridge.cpp
+@@ -153,6 +153,9 @@ void DiscordBridge::start()
+ 		return;
+ 	}
+ 
++	int32_t lifetime = g_config.getNumber(ConfigManager::DISCORD_BRIDGE_LINK_CODE_LIFETIME);
++	m_linkCodeLifetime = lifetime > 0 ? lifetime : 600;
++
+ 	int32_t queueSize = g_config.getNumber(ConfigManager::DISCORD_BRIDGE_QUEUE_SIZE);
+ 	m_maxQueue = queueSize > 0 ? queueSize : 2000;
+ 
+@@ -379,7 +382,18 @@ void DiscordBridge::onAuthenticated(DiscordBridgeSession_ptr session)
+ 
+ 	std::ostringstream welcome;
+ 	welcome << "{\"type\":\"welcome\",\"protocol\":" << DISCORD_BRIDGE_PROTOCOL_VERSION << ",\"bootId\":\"" << m_bootId
+-		<< "\",\"serverName\":\"" << escapeJson(g_config.getString(ConfigManager::SERVER_NAME)) << "\",\"queued\":" << queued << "}";
++		<< "\",\"serverName\":\"" << escapeJson(g_config.getString(ConfigManager::SERVER_NAME)) << "\",\"queued\":" << queued
++		<< ",\"features\":[";
++	bool first = true;
++	if(g_config.getBool(ConfigManager::DISCORD_BRIDGE_PLAYER_SESSIONS))
++	{
++		welcome << "\"playerSessions\"";
++		first = false;
++	}
++	if(g_config.getBool(ConfigManager::DISCORD_BRIDGE_ACCOUNT_LINKING))
++		welcome << (first ? "" : ",") << "\"accountLinking\"";
++
++	welcome << "]}";
+ 	session->send(welcome.str());
+ 	std::cout << "> Discord bot connected to the bridge (" << queued << " queued events)." << std::endl;
+ 	flush();
+@@ -611,3 +625,189 @@ void DiscordBridgeSession::onTimer(const boost::system::error_code& error)
+ 	m_timer.expires_after(boost::asio::chrono::seconds(5));
+ 	m_timer.async_wait(boost::bind(&DiscordBridgeSession::onTimer, shared_from_this(), boost::asio::placeholders::error));
+ }
++
++namespace
++{
++	const time_t LINK_CODE_MIN_INTERVAL = 30;
++	const size_t LINK_CODE_MAX_PER_HOUR = 5;
++	const uint32_t REDEEM_MAX_FAILURES_PER_USER = 5;
++	const time_t REDEEM_USER_WINDOW = 15 * 60;
++	const uint32_t REDEEM_MAX_FAILURES_GLOBAL = 50;
++	const time_t REDEEM_GLOBAL_WINDOW = 10 * 60;
++	// Crockford base32: no I, L, O or U, so codes are easy to read and type.
++	const char LINK_CODE_ALPHABET[] = "0123456789ABCDEFGHJKMNPQRSTVWXYZ";
++	const size_t LINK_CODE_LENGTH = 8;
++
++	std::string sha256Hex(const std::string& text)
++	{
++		unsigned char digest[EVP_MAX_MD_SIZE];
++		unsigned int length = 0;
++		if(EVP_Digest(text.data(), text.size(), digest, &length, EVP_sha256(), NULL) != 1)
++			return "";
++
++		return toHex(digest, length);
++	}
++
++	// Uppercase, without separators; O/I/L typed by mistake count as 0/1/1.
++	std::string normalizeLinkCode(const std::string& code)
++	{
++		std::string out;
++		for(size_t i = 0; i < code.size() && out.size() <= LINK_CODE_LENGTH; ++i)
++		{
++			char c = (char)toupper((unsigned char)code[i]);
++			if(c == '-' || c == ' ')
++				continue;
++			if(c == 'O')
++				c = '0';
++			else if(c == 'I' || c == 'L')
++				c = '1';
++			if(!strchr(LINK_CODE_ALPHABET, c) || c == '\0')
++				return "";
++			out += c;
++		}
++
++		return out.size() == LINK_CODE_LENGTH ? out : "";
++	}
++
++	bool attemptsExceeded(DiscordBridge::Attempts& attempts, time_t now, time_t window, uint32_t max)
++	{
++		if(now - attempts.windowStart >= window)
++		{
++			attempts.count = 0;
++			attempts.windowStart = now;
++		}
++
++		return attempts.count >= max;
++	}
++}
++
++void DiscordBridge::pruneLinkCodes(time_t now)
++{
++	for(std::map<std::string, LinkCode>::iterator it = m_linkCodes.begin(); it != m_linkCodes.end();)
++	{
++		// Expired codes are kept for one more lifetime so redeeming them reports "expired".
++		if(it->second.expires + m_linkCodeLifetime <= now)
++			m_linkCodes.erase(it++);
++		else
++			++it;
++	}
++
++	for(std::map<uint32_t, std::deque<time_t> >::iterator it = m_codeRequests.begin(); it != m_codeRequests.end();)
++	{
++		while(!it->second.empty() && now - it->second.front() >= 3600)
++			it->second.pop_front();
++
++		if(it->second.empty())
++			m_codeRequests.erase(it++);
++		else
++			++it;
++	}
++
++	for(std::map<std::string, Attempts>::iterator it = m_redeemFailures.begin(); it != m_redeemFailures.end();)
++	{
++		if(now - it->second.windowStart >= REDEEM_USER_WINDOW)
++			m_redeemFailures.erase(it++);
++		else
++			++it;
++	}
++}
++
++std::string DiscordBridge::createLinkCode(uint32_t accountId, std::string& error)
++{
++	time_t now = time(NULL);
++	pruneLinkCodes(now);
++	if(!g_config.getBool(ConfigManager::DISCORD_BRIDGE_ACCOUNT_LINKING))
++	{
++		error = "disabled";
++		return "";
++	}
++
++	if(!accountId)
++	{
++		error = "invalid_account";
++		return "";
++	}
++
++	std::deque<time_t>& requests = m_codeRequests[accountId];
++	if((!requests.empty() && now - requests.back() < LINK_CODE_MIN_INTERVAL) || requests.size() >= LINK_CODE_MAX_PER_HOUR)
++	{
++		error = "rate_limited";
++		return "";
++	}
++
++	unsigned char random[LINK_CODE_LENGTH * 5 / 8];
++	if(RAND_bytes(random, sizeof(random)) != 1)
++	{
++		error = "internal";
++		return "";
++	}
++
++	std::string code;
++	uint64_t bits = 0;
++	for(size_t i = 0; i < sizeof(random); ++i)
++		bits = (bits << 8) | random[i];
++
++	for(size_t i = 0; i < LINK_CODE_LENGTH; ++i)
++		code += LINK_CODE_ALPHABET[(bits >> (5 * (LINK_CODE_LENGTH - 1 - i))) & 0x1F];
++
++	revokeLinkCodes(accountId);
++	LinkCode entry;
++	entry.accountId = accountId;
++	entry.expires = now + m_linkCodeLifetime;
++	m_linkCodes[sha256Hex(code)] = entry;
++	requests.push_back(now);
++	OPENSSL_cleanse(random, sizeof(random));
++	return code.substr(0, 4) + "-" + code.substr(4);
++}
++
++uint32_t DiscordBridge::consumeLinkCode(const std::string& code, const std::string& discordUserId, std::string& error)
++{
++	time_t now = time(NULL);
++	pruneLinkCodes(now);
++	if(!g_config.getBool(ConfigManager::DISCORD_BRIDGE_ACCOUNT_LINKING))
++	{
++		error = "disabled";
++		return 0;
++	}
++
++	Attempts& userFailures = m_redeemFailures[discordUserId];
++	if(attemptsExceeded(userFailures, now, REDEEM_USER_WINDOW, REDEEM_MAX_FAILURES_PER_USER)
++		|| attemptsExceeded(m_globalRedeemFailures, now, REDEEM_GLOBAL_WINDOW, REDEEM_MAX_FAILURES_GLOBAL))
++	{
++		error = "locked";
++		return 0;
++	}
++
++	std::string normalized = normalizeLinkCode(code);
++	std::map<std::string, LinkCode>::iterator it = normalized.empty() ? m_linkCodes.end() : m_linkCodes.find(sha256Hex(normalized));
++	if(it == m_linkCodes.end())
++	{
++		++userFailures.count;
++		++m_globalRedeemFailures.count;
++		error = "invalid_code";
++		return 0;
++	}
++
++	uint32_t accountId = it->second.accountId;
++	bool expired = it->second.expires <= now;
++	m_linkCodes.erase(it);
++	if(expired)
++	{
++		error = "expired";
++		return 0;
++	}
++
++	m_redeemFailures.erase(discordUserId);
++	return accountId;
++}
++
++void DiscordBridge::revokeLinkCodes(uint32_t accountId)
++{
++	for(std::map<std::string, LinkCode>::iterator it = m_linkCodes.begin(); it != m_linkCodes.end();)
++	{
++		if(it->second.accountId == accountId)
++			m_linkCodes.erase(it++);
++		else
++			++it;
++	}
++}
+diff --git a/core/server/src/discordbridge.h b/core/server/src/discordbridge.h
+index 702a949..f0fac22 100644
+--- a/core/server/src/discordbridge.h
++++ b/core/server/src/discordbridge.h
+@@ -30,6 +30,7 @@
+ 
+ #define DISCORD_BRIDGE_PROTOCOL_VERSION 1
+ 
++class Player;
+ class DiscordBridgeSession;
+ typedef boost::shared_ptr<DiscordBridgeSession> DiscordBridgeSession_ptr;
+ 
+@@ -43,6 +44,13 @@ struct DiscordBridgeStats
+ class DiscordBridge
+ {
+ 	public:
++		struct Attempts
++		{
++			Attempts(): count(0), windowStart(0) {}
++			uint32_t count;
++			time_t windowStart;
++		};
++
+ 		virtual ~DiscordBridge() {}
+ 		static DiscordBridge* getInstance()
+ 		{
+@@ -69,6 +77,23 @@ class DiscordBridge
+ 		// Escapes a Latin-1 game string for a JSON string literal (bytes >= 0x80 become \u00XX).
+ 		static std::string escapeJson(const std::string& text);
+ 
++		// Player sessions, dispatcher thread. A session starts once the login scripts accepted
++		// the player and ends when the player is removed from the world; both emit an
++		// admin-scoped event. Only the first logout reason set for a session is kept.
++		void onPlayerLogin(Player* player);
++		void onPlayerRemoved(Player* player);
++		void setLogoutReason(Player* player, const std::string& reason);
++		std::string getSessionId(uint32_t playerGuid) const;
++
++		// One-time Discord link codes, dispatcher thread. Codes live only in memory as SHA-256
++		// hashes, expire after 10 minutes and are consumed on first use. An empty result or 0
++		// means failure; error then holds a short reason code.
++		std::string createLinkCode(uint32_t accountId, std::string& error);
++		uint32_t consumeLinkCode(const std::string& code, const std::string& discordUserId, std::string& error);
++		void revokeLinkCodes(uint32_t accountId);
++		// Dispatcher thread. Tells the bot that a linked account created or deleted a character.
++		void onAccountCharactersChanged(uint32_t accountId, const std::string& change, const std::string& name);
++
+ 		// Network thread only.
+ 		boost::asio::io_context& getIoContext() {return m_io;}
+ 		bool verifyAuth(const std::string& nonce, const std::string& hexMac) const;
+@@ -79,7 +104,7 @@ class DiscordBridge
+ 
+ 	private:
+ 		DiscordBridge(): m_enabled(false), m_connected(false), m_running(false), m_dispatchPending(false),
+-			m_maxQueue(2000), m_maxIncoming(500), m_sequence(0),
++			m_maxQueue(2000), m_maxIncoming(500), m_sequence(0), m_sessionSequence(0), m_linkCodeLifetime(600),
+ 			m_acceptor(m_io), m_work(boost::asio::make_work_guard(m_io)) {}
+ 
+ 		void networkThread();
+@@ -98,6 +123,26 @@ class DiscordBridge
+ 		std::deque<std::string> m_events, m_direct, m_incoming;
+ 		DiscordBridgeStats m_stats;
+ 
++		struct PlayerSession
++		{
++			std::string id, reason;
++			time_t loginTime;
++		};
++		std::map<uint32_t, PlayerSession> m_playerSessions;
++		uint64_t m_sessionSequence;
++
++		struct LinkCode
++		{
++			uint32_t accountId;
++			time_t expires;
++		};
++		std::map<std::string, LinkCode> m_linkCodes;
++		std::map<uint32_t, std::deque<time_t> > m_codeRequests;
++		std::map<std::string, Attempts> m_redeemFailures;
++		Attempts m_globalRedeemFailures;
++		time_t m_linkCodeLifetime;
++		void pruneLinkCodes(time_t now);
++
+ 		boost::asio::io_context m_io;
+ 		boost::asio::ip::tcp::acceptor m_acceptor;
+ 		boost::asio::executor_work_guard<boost::asio::io_context::executor_type> m_work;
+diff --git a/core/server/src/discordbridgesessions.cpp b/core/server/src/discordbridgesessions.cpp
+new file mode 100644
+index 0000000..809e605
+--- /dev/null
++++ b/core/server/src/discordbridgesessions.cpp
+@@ -0,0 +1,137 @@
++////////////////////////////////////////////////////////////////////////
++// PokeVerse - player sessions for the Discord bridge (admin activity log)
++////////////////////////////////////////////////////////////////////////
++// This program is free software: you can redistribute it and/or modify
++// it under the terms of the GNU General Public License as published by
++// the Free Software Foundation, either version 3 of the License, or
++// (at your option) any later version.
++//
++// This program is distributed in the hope that it will be useful,
++// but WITHOUT ANY WARRANTY; without even the implied warranty of
++// MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
++// GNU General Public License for more details.
++//
++// You should have received a copy of the GNU General Public License
++// along with this program.  If not, see <http://www.gnu.org/licenses/>.
++////////////////////////////////////////////////////////////////////////
++// Kept apart from discordbridge.cpp: the game's RSA class clashes with OpenSSL's RSA typedef.
++#include "otpch.h"
++
++#include "discordbridge.h"
++#include "configmanager.h"
++#include "game.h"
++#include "player.h"
++#include "database.h"
++
++extern ConfigManager g_config;
++extern Game g_game;
++
++namespace
++{
++	const char* clientOsName(OperatingSystem_t os)
++	{
++		switch(os)
++		{
++			case CLIENTOS_LINUX: return "linux";
++			case CLIENTOS_WINDOWS: return "windows";
++			case CLIENTOS_FLASH: return "flash";
++			case CLIENTOS_OTCLIENT_WINDOWS: return "otclient-windows";
++			case CLIENTOS_OTCLIENT_LINUX: return "otclient-linux";
++			case CLIENTOS_OTCLIENT_MAC: return "otclient-mac";
++			default: return "unknown";
++		}
++	}
++
++	bool knownLogoutReason(const std::string& reason)
++	{
++		return reason == "logout" || reason == "connection_lost" || reason == "timeout" || reason == "kick"
++			|| reason == "death" || reason == "shutdown" || reason == "server_closed";
++	}
++
++}
++
++void DiscordBridge::onPlayerLogin(Player* player)
++{
++	if(!m_enabled || !player || !g_config.getBool(ConfigManager::DISCORD_BRIDGE_PLAYER_SESSIONS))
++		return;
++
++	PlayerSession session;
++	std::ostringstream id;
++	id << m_bootId << "-s" << ++m_sessionSequence;
++	session.id = id.str();
++	session.loginTime = time(NULL);
++	m_playerSessions[player->getGUID()] = session;
++
++	std::ostringstream event;
++	event << "{\"kind\":\"player_login\",\"scope\":\"admin\",\"sessionId\":\"" << session.id
++		<< "\",\"character\":\"" << escapeJson(player->getName()) << "\",\"level\":" << player->getLevel()
++		<< ",\"accountId\":" << player->getAccount() << ",\"loginTime\":" << session.loginTime;
++	if(g_config.getBool(ConfigManager::DISCORD_BRIDGE_SESSION_IPS))
++		event << ",\"ip\":\"" << convertIPAddress(player->getIP()) << "\"";
++
++	event << ",\"clientOs\":\"" << clientOsName(player->getOperatingSystem()) << "\",\"clientVersion\":"
++		<< player->getClientVersion() << ",\"playersOnline\":" << g_game.getPlayersOnline() << "}";
++	emitEvent(event.str());
++}
++
++void DiscordBridge::setLogoutReason(Player* player, const std::string& reason)
++{
++	if(!player || !knownLogoutReason(reason))
++		return;
++
++	std::map<uint32_t, PlayerSession>::iterator it = m_playerSessions.find(player->getGUID());
++	if(it != m_playerSessions.end() && it->second.reason.empty())
++		it->second.reason = reason;
++}
++
++void DiscordBridge::onPlayerRemoved(Player* player)
++{
++	if(!player)
++		return;
++
++	std::map<uint32_t, PlayerSession>::iterator it = m_playerSessions.find(player->getGUID());
++	if(it == m_playerSessions.end())
++		return;
++
++	PlayerSession session = it->second;
++	m_playerSessions.erase(it);
++
++	time_t now = time(NULL);
++	std::ostringstream event;
++	event << "{\"kind\":\"player_logout\",\"scope\":\"admin\",\"sessionId\":\"" << session.id
++		<< "\",\"character\":\"" << escapeJson(player->getName()) << "\",\"level\":" << player->getLevel()
++		<< ",\"accountId\":" << player->getAccount() << ",\"loginTime\":" << session.loginTime
++		<< ",\"logoutTime\":" << now << ",\"duration\":" << (now >= session.loginTime ? now - session.loginTime : 0);
++	if(!session.reason.empty())
++		event << ",\"reason\":\"" << session.reason << "\"";
++
++	event << ",\"playersOnline\":" << g_game.getPlayersOnline() << "}";
++	emitEvent(event.str());
++}
++
++std::string DiscordBridge::getSessionId(uint32_t playerGuid) const
++{
++	std::map<uint32_t, PlayerSession>::const_iterator it = m_playerSessions.find(playerGuid);
++	return it != m_playerSessions.end() ? it->second.id : "";
++}
++
++void DiscordBridge::onAccountCharactersChanged(uint32_t accountId, const std::string& change, const std::string& name)
++{
++	if(!m_enabled || !accountId || !g_config.getBool(ConfigManager::DISCORD_BRIDGE_ACCOUNT_LINKING))
++		return;
++
++	Database* db = Database::getInstance();
++	DBQuery query;
++	query << "SELECT `discord_user_id` FROM `discord_account_links` WHERE `account_id` = " << accountId << " LIMIT 1";
++	DBResult* result;
++	if(!(result = db->storeQuery(query.str())))
++		return;
++
++	std::string discordUserId = result->getDataString("discord_user_id");
++	result->free();
++
++	std::ostringstream event;
++	event << "{\"kind\":\"account_characters\",\"scope\":\"account\",\"discordUserId\":\"" << escapeJson(discordUserId)
++		<< "\",\"change\":\"" << change << "\",\"character\":\"" << escapeJson(name) << "\"}";
++	emitEvent(event.str());
++}
+diff --git a/core/server/src/game.cpp b/core/server/src/game.cpp
+index f2f0497..27d00c1 100644
+--- a/core/server/src/game.cpp
++++ b/core/server/src/game.cpp
+@@ -220,6 +220,7 @@ void Game::setGameState(GameState_t newState)
+ 				AutoList<Player>::iterator it = Player::autoList.begin();
+ 				while(it != Player::autoList.end()) //kick all players that are still online
+ 				{
++					DiscordBridge::getInstance()->setLogoutReason(it->second, "shutdown");
+ 					it->second->kickPlayer(true, true);
+ 					it = Player::autoList.begin();
+ 				}
+@@ -240,6 +241,7 @@ void Game::setGameState(GameState_t newState)
+ 				{
+ 					if(!it->second->hasFlag(PlayerFlag_CanAlwaysLogin))
+ 					{
++						DiscordBridge::getInstance()->setLogoutReason(it->second, "server_closed");
+ 						it->second->kickPlayer(true, true);
+ 						it = Player::autoList.begin();
+ 					}
+@@ -987,6 +989,8 @@ bool Game::removeCreature(Creature* creature, bool isLogout /*= true*/)
+ 
+ 	creature->getParent()->postRemoveNotification(NULL, creature, NULL, oldIndex, true);
+ 	creature->onRemovedCreature();
++	if(Player* removedPlayer = creature->getPlayer())
++		DiscordBridge::getInstance()->onPlayerRemoved(removedPlayer);
+ 
+ 	autoList.erase(creature->getID());
+ 	freeThing(creature);
+diff --git a/core/server/src/luascript.cpp b/core/server/src/luascript.cpp
+index da39893..2aff2a6 100644
+--- a/core/server/src/luascript.cpp
++++ b/core/server/src/luascript.cpp
+@@ -2017,6 +2017,21 @@ void LuaScriptInterface::registerFunctions()
+ 	//getDiscordBridgeInfo()
+ 	lua_register(m_luaState, "getDiscordBridgeInfo", LuaScriptInterface::luaGetDiscordBridgeInfo);
+ 
++	//doCreateDiscordLinkCode(accountId)
++	lua_register(m_luaState, "doCreateDiscordLinkCode", LuaScriptInterface::luaDoCreateDiscordLinkCode);
++
++	//doConsumeDiscordLinkCode(code, discordUserId)
++	lua_register(m_luaState, "doConsumeDiscordLinkCode", LuaScriptInterface::luaDoConsumeDiscordLinkCode);
++
++	//doRevokeDiscordLinkCodes(accountId)
++	lua_register(m_luaState, "doRevokeDiscordLinkCodes", LuaScriptInterface::luaDoRevokeDiscordLinkCodes);
++
++	//doSetDiscordLogoutReason(cid, reason)
++	lua_register(m_luaState, "doSetDiscordLogoutReason", LuaScriptInterface::luaDoSetDiscordLogoutReason);
++
++	//getDiscordSessionId(guid)
++	lua_register(m_luaState, "getDiscordSessionId", LuaScriptInterface::luaGetDiscordSessionId);
++
+ 	//getGuildId(guildName)
+ 	lua_register(m_luaState, "getGuildId", LuaScriptInterface::luaGetGuildId);
+ 
+@@ -6144,6 +6159,72 @@ int32_t LuaScriptInterface::luaGetDiscordBridgeInfo(lua_State* L)
+ 	setFieldFloat(L, "received", (double)stats.received);
+ 	setFieldFloat(L, "rejected", (double)stats.rejected);
+ 	setFieldFloat(L, "connections", (double)stats.connections);
++	setFieldBool(L, "accountLinking", g_config.getBool(ConfigManager::DISCORD_BRIDGE_ACCOUNT_LINKING));
++	return 1;
++}
++
++int32_t LuaScriptInterface::luaDoCreateDiscordLinkCode(lua_State* L)
++{
++	//doCreateDiscordLinkCode(accountId)
++	//returns the code, or nil and an error code
++	std::string error;
++	std::string code = DiscordBridge::getInstance()->createLinkCode((uint32_t)popNumber(L), error);
++	if(code.empty())
++	{
++		lua_pushnil(L);
++		lua_pushstring(L, error.c_str());
++		return 2;
++	}
++
++	lua_pushstring(L, code.c_str());
++	return 1;
++}
++
++int32_t LuaScriptInterface::luaDoConsumeDiscordLinkCode(lua_State* L)
++{
++	//doConsumeDiscordLinkCode(code, discordUserId)
++	//returns the account id, or nil and an error code
++	std::string discordUserId = popString(L), code = popString(L), error;
++	uint32_t accountId = DiscordBridge::getInstance()->consumeLinkCode(code, discordUserId, error);
++	if(!accountId)
++	{
++		lua_pushnil(L);
++		lua_pushstring(L, error.c_str());
++		return 2;
++	}
++
++	lua_pushnumber(L, accountId);
++	return 1;
++}
++
++int32_t LuaScriptInterface::luaDoRevokeDiscordLinkCodes(lua_State* L)
++{
++	//doRevokeDiscordLinkCodes(accountId)
++	DiscordBridge::getInstance()->revokeLinkCodes((uint32_t)popNumber(L));
++	lua_pushboolean(L, true);
++	return 1;
++}
++
++int32_t LuaScriptInterface::luaDoSetDiscordLogoutReason(lua_State* L)
++{
++	//doSetDiscordLogoutReason(cid, reason)
++	std::string reason = popString(L);
++	ScriptEnviroment* env = getEnv();
++	if(Player* player = env->getPlayerByUID(popNumber(L)))
++	{
++		DiscordBridge::getInstance()->setLogoutReason(player, reason);
++		lua_pushboolean(L, true);
++	}
++	else
++		lua_pushboolean(L, false);
++
++	return 1;
++}
++
++int32_t LuaScriptInterface::luaGetDiscordSessionId(lua_State* L)
++{
++	//getDiscordSessionId(guid)
++	lua_pushstring(L, DiscordBridge::getInstance()->getSessionId((uint32_t)popNumber(L)).c_str());
+ 	return 1;
+ }
+ 
+diff --git a/core/server/src/luascript.h b/core/server/src/luascript.h
+index dbc8d82..e06620b 100644
+--- a/core/server/src/luascript.h
++++ b/core/server/src/luascript.h
+@@ -579,6 +579,11 @@ class LuaScriptInterface
+ 		static int32_t luaDoDiscordBridgeSend(lua_State* L);
+ 		static int32_t luaGetDiscordBridgeMessages(lua_State* L);
+ 		static int32_t luaGetDiscordBridgeInfo(lua_State* L);
++		static int32_t luaDoCreateDiscordLinkCode(lua_State* L);
++		static int32_t luaDoConsumeDiscordLinkCode(lua_State* L);
++		static int32_t luaDoRevokeDiscordLinkCodes(lua_State* L);
++		static int32_t luaDoSetDiscordLogoutReason(lua_State* L);
++		static int32_t luaGetDiscordSessionId(lua_State* L);
+ 		static int32_t luaGetGuildId(lua_State* L);
+ 		static int32_t luaGetGuildMotd(lua_State* L);
+ 		static int32_t luaIsPlayerPzLocked(lua_State* L);
+diff --git a/core/server/src/player.cpp b/core/server/src/player.cpp
+index 2313f10..27bee1c 100644
+--- a/core/server/src/player.cpp
++++ b/core/server/src/player.cpp
+@@ -37,6 +37,7 @@
+ 
+ #include "configmanager.h"
+ #include "game.h"
++#include "discordbridge.h"
+ #include "chat.h"
+ 
+ #include "waitlist.h"
+@@ -1859,6 +1860,7 @@ void Player::onThink(uint32_t interval)
+             }
+             if (g_config.getBool(ConfigManager::DISCONNECT_AT_EXIT) &&
+                     !isConnecting && !hasCondition(CONDITION_INVULNERABLE) && getDisconnectAtExit()) {
++                DiscordBridge::getInstance()->setLogoutReason(this, "connection_lost");
+                 g_creatureEvents->playerLogout(this, true);
+                 g_game.removeCreature(this, true);
+             }
+@@ -1867,6 +1869,7 @@ void Player::onThink(uint32_t interval)
+ 
+ 	if((timeNow - lastPong) >= (getDisconnectAtExit() ? 60000 : 600000) && canLogout(true))
+ 	{
++		DiscordBridge::getInstance()->setLogoutReason(this, "timeout");
+ 		if(client)
+ 			client->logout(true, true);
+ 		else if(g_creatureEvents->playerLogout(this, true))
+@@ -2332,6 +2335,7 @@ bool Player::onDeath()
+     
+     if (!WaitingList::getInstance()->canLogin(this)) { 
+         removeConditions(CONDITIONEND_DEATH);
++        DiscordBridge::getInstance()->setLogoutReason(this, "death");
+         g_game.removeCreature(this, false);
+         kickPlayer(false, true);
+     } else {
+@@ -2463,6 +2467,7 @@ bool Player::onDeath()
+ 		sendSkills();
+ 
+ 		//PS sendReLoginWindow();
++		DiscordBridge::getInstance()->setLogoutReason(this, "death");
+ 		g_game.removeCreature(this, false);
+ 		this->kickPlayer(false, true);
+ 	}
+@@ -2473,6 +2478,7 @@ bool Player::onDeath()
+ 		{
+ 			loginPosition = masterPosition;
+ 			//PS sendReLoginWindow();
++			DiscordBridge::getInstance()->setLogoutReason(this, "death");
+ 			g_game.removeCreature(this, false);
+ 			this->kickPlayer(false, true);		
+ 		}
+@@ -3893,6 +3899,8 @@ void Player::onPlacedCreature()
+ 	//scripting event - onLogin
+ 	if(!g_creatureEvents->playerLogin(this))
+ 		kickPlayer(true, true);
++	else
++		DiscordBridge::getInstance()->onPlayerLogin(this);
+ }
+ 
+ void Player::onAttackedCreatureDrain(Creature* target, int32_t points)
+diff --git a/core/server/src/protocolaccount.cpp b/core/server/src/protocolaccount.cpp
+index 9ca02bc..1739a47 100644
+--- a/core/server/src/protocolaccount.cpp
++++ b/core/server/src/protocolaccount.cpp
+@@ -31,6 +31,7 @@
+ 
+ #include "configmanager.h"
+ #include "game.h"
++#include "discordbridge.h"
+ 
+ extern ConfigManager g_config;
+ extern Game g_game;
+@@ -252,6 +253,7 @@ std::string ProtocolAccount::createCharacter(uint32_t accountId, std::string nam
+ 		return "The character could not be created, please try again.";
+ 
+ 	success = true;
++	DiscordBridge::getInstance()->onAccountCharactersChanged(accountId, "created", name);
+ 	return "Your character " + name + " has been created. Log in to start the tutorial.";
+ }
+ 
+@@ -262,6 +264,7 @@ std::string ProtocolAccount::deleteCharacter(uint32_t accountId, const std::stri
+ 	{
+ 		case DELETE_SUCCESS:
+ 			success = true;
++			DiscordBridge::getInstance()->onAccountCharactersChanged(accountId, "deleted", name);
+ 			return "The character " + name + " has been deleted.";
+ 		case DELETE_ONLINE:
+ 			return "You cannot delete a character that is online.";
+diff --git a/core/server/src/protocolgame.cpp b/core/server/src/protocolgame.cpp
+index 4f16723..2aeed99 100644
+--- a/core/server/src/protocolgame.cpp
++++ b/core/server/src/protocolgame.cpp
+@@ -46,6 +46,7 @@
+ #include "chat.h"
+ #include "configmanager.h"
+ #include "game.h"
++#include "discordbridge.h"
+ 
+ #include "combat.h"
+ 
+@@ -376,9 +377,21 @@ bool ProtocolGame::logout(bool displayEffect, bool forceLogout)
+ 	if(Connection_ptr connection = getConnection())
+ 		connection->close();
+ 
++	if(m_logoutRequested)
++		DiscordBridge::getInstance()->setLogoutReason(player, "logout");
++
+ 	return g_game.removeCreature(player);
+ }
+ 
++bool ProtocolGame::requestLogout()
++{
++	//dispatcher thread
++	m_logoutRequested = true;
++	bool result = logout(true, false);
++	m_logoutRequested = false;
++	return result;
++}
++
+ bool ProtocolGame::connect(uint32_t playerId, OperatingSystem_t operatingSystem, uint16_t version)
+ {
+ 	unRef();
+@@ -1235,7 +1248,7 @@ uint32_t ProtocolGame::getCreatureID(const Creature* creature)
+ //********************** Parse methods *******************************//
+ void ProtocolGame::parseLogout(NetworkMessage& msg)
+ {
+-	Dispatcher::getInstance().addTask(createTask(boost::bind(&ProtocolGame::logout, this, true, false)));
++	Dispatcher::getInstance().addTask(createTask(boost::bind(&ProtocolGame::requestLogout, this)));
+ }
+ 
+ void ProtocolGame::parseCreatePrivateChannel(NetworkMessage& msg)
+diff --git a/core/server/src/protocolgame.h b/core/server/src/protocolgame.h
+index fa91796..61c1501 100644
+--- a/core/server/src/protocolgame.h
++++ b/core/server/src/protocolgame.h
+@@ -51,6 +51,7 @@ class ProtocolGame : public Protocol
+ 			protocolGameCount++;
+ #endif
+ 			player = NULL;
++			m_logoutRequested = false;
+ 			tvOwner = NULL;
+ 			tvChannel = NULL;
+ 			m_eventConnect = 0;
+@@ -81,6 +82,8 @@ class ProtocolGame : public Protocol
+ 		bool login(const std::string& name, uint32_t id, const std::string& password,
+ 			OperatingSystem_t operatingSystem, uint16_t version, bool gamemaster);
+ 		bool logout(bool displayEffect, bool forceLogout);
++		// Logout requested by the client (packet 0x14).
++		bool requestLogout();
+ 
+ 		void setPlayer(Player* p);
+ 		void setTVOwner(Player* newTVOwner);
+@@ -408,6 +411,7 @@ class ProtocolGame : public Protocol
+ 
+ 		friend class Player;
+ 		Player* player;
++		bool m_logoutRequested;
+ 		Player* tvOwner;
+ 		TVChannel* tvChannel;
+ 
+-- 
+2.43.0
+

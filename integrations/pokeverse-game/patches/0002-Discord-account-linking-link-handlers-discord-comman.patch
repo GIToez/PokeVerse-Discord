@@ -1,0 +1,545 @@
+From 58f87bbc5c9ca0595609fe874ad02af527842e9d Mon Sep 17 00:00:00 2001
+From: Cursor Agent <cursoragent@cursor.com>
+Date: Sat, 10 Oct 2026 16:47:17 +0000
+Subject: [PATCH 2/4] Discord account linking: link handlers, !discord command,
+ staff kick reasons and link table
+
+---
+ .../data/lib/ps/systems/056-discordBridge.lua |  18 +-
+ .../lib/ps/systems/058-discordAccounts.lua    | 299 ++++++++++++++++++
+ .../data/talkactions/scripts/discord.lua      | 104 ++++++
+ core/server/data/talkactions/scripts/kick.lua |   1 +
+ .../data/talkactions/scripts/masskick.lua     |   1 +
+ core/server/data/talkactions/talkactions.xml  |   1 +
+ core/server/schemas/pokeverse-extensions.sql  |  22 ++
+ 7 files changed, 445 insertions(+), 1 deletion(-)
+ create mode 100644 core/server/data/lib/ps/systems/058-discordAccounts.lua
+ create mode 100644 core/server/data/talkactions/scripts/discord.lua
+
+diff --git a/core/server/data/lib/ps/systems/056-discordBridge.lua b/core/server/data/lib/ps/systems/056-discordBridge.lua
+index b70ef78..54358e3 100644
+--- a/core/server/data/lib/ps/systems/056-discordBridge.lua
++++ b/core/server/data/lib/ps/systems/056-discordBridge.lua
+@@ -5,7 +5,9 @@
+ -- Rules for this file:
+ --  * Never let a bridge failure break gameplay: every hook is wrapped in pcall and
+ --    does nothing when the bridge is disabled.
+---  * Request handlers are read-only. They never modify players, items or the database.
++--  * Request handlers here are read-only. They never modify players, items or the database.
++--    Account linking (058-discordAccounts.lua) registers its own handlers and only writes
++--    the `discord_account_links` table.
+ 
+ DiscordBridge = {}
+ 
+@@ -315,6 +317,8 @@ local function queryRows(query, fields)
+         for field, kind in pairs(fields) do
+             if (kind == "string") then
+                 row[field] = result.getDataString(resultId, field)
++            elseif (kind == "long") then
++                row[field] = result.getDataLong(resultId, field)
+             else
+                 row[field] = result.getDataInt(resultId, field)
+             end
+@@ -595,6 +599,18 @@ local HANDLERS = {
+     ["bridge.config"] = handleBridgeConfig,
+ }
+ 
++-- For other bridge modules (058-discordAccounts.lua).
++function DiscordBridge.registerHandler(method, handler)
++    HANDLERS[method] = handler
++end
++
++DiscordBridge.fail = fail
++DiscordBridge.sanitizeText = sanitizeText
++DiscordBridge.queryRows = queryRows
++DiscordBridge.queryNumber = queryNumber
++DiscordBridge.isHiddenGroup = isHiddenGroup
++DiscordBridge.safeCall = safeCall
++
+ local function respond(requestId, ok, payload)
+     local message = {type = "response", requestId = requestId, ok = ok}
+     if (ok) then
+diff --git a/core/server/data/lib/ps/systems/058-discordAccounts.lua b/core/server/data/lib/ps/systems/058-discordAccounts.lua
+new file mode 100644
+index 0000000..b181663
+--- /dev/null
++++ b/core/server/data/lib/ps/systems/058-discordAccounts.lua
+@@ -0,0 +1,299 @@
++-- Discord account linking: bridge request handlers for the PokeVerse-Discord bot and
++-- helpers for the in-game !discord command (data/talkactions/scripts/discord.lua).
++--
++-- A link joins one game account (not a character) to one Discord user. The game is
++-- authoritative: links live in `discord_account_links` (schemas/pokeverse-extensions.sql)
++-- and this is the only file that writes that table. One-time link codes are created and
++-- consumed in C++ (src/discordbridge.cpp) and never stored in the database.
++--
++-- Every request names the Discord user it acts for (`discordUserId`); the bot only passes
++-- the id of the user who ran the command, or the target of an admin-only command. Results
++-- never include account ids, account names or IP addresses.
++
++DiscordAccounts = {}
++
++local MAX_LIST_LIMIT = 200
++local UNLIMITED_PREMIUM_DAYS = 65535
++
++local fail = DiscordBridge.fail
++local queryRows = DiscordBridge.queryRows
++
++local function worldId()
++    return tonumber(getConfigValue("worldId")) or 0
++end
++
++function DiscordAccounts.isEnabled()
++    local info = getDiscordBridgeInfo and getDiscordBridgeInfo()
++    return info ~= nil and info.accountLinking == true
++end
++
++local function validDiscordUserId(id)
++    return type(id) == "string" and id:match("^%d+$") ~= nil and #id >= 17 and #id <= 20
++end
++
++local function requireDiscordUserId(params, field)
++    local id = params[field or "discordUserId"]
++    if (not validDiscordUserId(id)) then
++        fail("invalid_params", "invalid Discord user id")
++    end
++    return id
++end
++
++local function requireEnabled()
++    if (not DiscordAccounts.isEnabled()) then
++        fail("disabled", "account linking is disabled on this server")
++    end
++end
++
++-- Links ---------------------------------------------------------------------------
++
++local LINK_FIELDS = {account_id = "number", discord_user_id = "string", main_player_id = "number",
++    linked_at = "long", updated_at = "long"}
++
++local function linkQuery(where)
++    return string.concat("SELECT `account_id`, `discord_user_id`, IFNULL(`main_player_id`, 0) AS `main_player_id`, ",
++        "`linked_at`, `updated_at` FROM `discord_account_links` WHERE ", where, " LIMIT 1;")
++end
++
++function DiscordAccounts.getLinkByDiscordUser(discordUserId)
++    return queryRows(linkQuery(string.concat("`discord_user_id` = ", db.escapeString(discordUserId))), LINK_FIELDS)[1]
++end
++
++function DiscordAccounts.getLinkByAccount(accountId)
++    return queryRows(linkQuery(string.concat("`account_id` = ", tonumber(accountId) or 0)), LINK_FIELDS)[1]
++end
++
++-- Characters of an account on this world, oldest (lowest id) first. The schema has no
++-- creation date; ids are AUTO_INCREMENT, so the lowest id is the first one created.
++function DiscordAccounts.getCharacters(accountId)
++    return queryRows(string.concat("SELECT `id`, `name`, `level`, `vocation` FROM `players` WHERE `account_id` = ",
++        tonumber(accountId) or 0, " AND `deleted` = 0 AND `world_id` = ", worldId(), " ORDER BY `id` ASC;"),
++        {id = "number", name = "string", level = "number", vocation = "number"})
++end
++
++local function setMainPlayer(accountId, playerId)
++    return db.executeQuery(string.concat("UPDATE `discord_account_links` SET `main_player_id` = ",
++        playerId and tostring(playerId) or "NULL", ", `updated_at` = ", os.time(), " WHERE `account_id` = ",
++        tonumber(accountId) or 0, ";"))
++end
++
++-- Returns the main character row (or nil when the account has no characters) and whether
++-- it had to be replaced. A main that was deleted or moved falls back to the first character.
++local function resolveMain(link, characters)
++    for _, character in ipairs(characters) do
++        if (character.id == link.main_player_id) then
++            return character, false
++        end
++    end
++
++    local fallback = characters[1]
++    local fallbackId = fallback and fallback.id or 0
++    if (fallbackId ~= link.main_player_id) then
++        setMainPlayer(link.account_id, fallback and fallback.id or nil)
++        link.main_player_id = fallbackId
++        return fallback, true
++    end
++    return fallback, false
++end
++
++local function vocationName(vocationId)
++    local info = getVocationInfo(vocationId)
++    return info and info.name or nil
++end
++
++local function liveLevel(character)
++    local cid = getPlayerByGUID(character.id)
++    if (cid and isPlayer(cid)) then
++        return getPlayerLevel(cid), true
++    end
++    return character.level, false
++end
++
++local function premiumDays(accountId)
++    return DiscordBridge.queryNumber(string.concat("SELECT `premdays` FROM `accounts` WHERE `id` = ",
++        tonumber(accountId) or 0, " LIMIT 1;"), "premdays") or 0
++end
++
++local function premiumInfo(accountId)
++    local days = premiumDays(accountId)
++    return {premium = days > 0, premiumUnlimited = days >= UNLIMITED_PREMIUM_DAYS,
++        premiumDays = days >= UNLIMITED_PREMIUM_DAYS and nil or days}
++end
++
++-- Summary of a link for the bot. mainChanged is true when the stored main was replaced.
++local function linkSummary(link)
++    local characters = DiscordAccounts.getCharacters(link.account_id)
++    local main, mainChanged = resolveMain(link, characters)
++    local summary = premiumInfo(link.account_id)
++    summary.linked = true
++    summary.discordUserId = link.discord_user_id
++    summary.linkedAt = link.linked_at
++    summary.characterCount = #characters
++    summary.mainChanged = mainChanged
++    if (main) then
++        local level = liveLevel(main)
++        summary.main = {name = main.name, level = level, vocation = vocationName(main.vocation)}
++    end
++    return summary
++end
++
++local function notifyAccount(accountId, message)
++    for _, cid in ipairs(getPlayersOnline()) do
++        if (getPlayerAccountId(cid) == accountId) then
++            doPlayerSendTextMessage(cid, MESSAGE_STATUS_CONSOLE_BLUE, message)
++        end
++    end
++end
++
++-- Removes a link and any pending codes. Returns the removed link or nil.
++function DiscordAccounts.unlinkAccount(accountId)
++    local link = DiscordAccounts.getLinkByAccount(accountId)
++    doRevokeDiscordLinkCodes(accountId)
++    if (not link) then
++        return nil
++    end
++    if (not db.executeQuery(string.concat("DELETE FROM `discord_account_links` WHERE `account_id` = ",
++            tonumber(accountId) or 0, ";"))) then
++        return nil
++    end
++    return link
++end
++
++-- Request handlers ---------------------------------------------------------------
++
++local function handleRedeem(params)
++    requireEnabled()
++    local discordUserId = requireDiscordUserId(params)
++    if (type(params.code) ~= "string" or #params.code < 8 or #params.code > 16) then
++        fail("invalid_code", "invalid code")
++    end
++
++    -- Checked before the code is consumed so a linked user can't burn someone's code.
++    if (DiscordAccounts.getLinkByDiscordUser(discordUserId)) then
++        fail("already_linked", "this Discord user is already linked to a game account")
++    end
++
++    local accountId, err = doConsumeDiscordLinkCode(params.code, discordUserId)
++    if (not accountId) then
++        fail(err or "invalid_code", "the code was not accepted")
++    end
++
++    if (DiscordAccounts.getLinkByAccount(accountId)) then
++        fail("account_linked", "the game account is already linked; unlink it in game first")
++    end
++
++    local characters = DiscordAccounts.getCharacters(accountId)
++    local now = os.time()
++    if (not db.executeQuery(string.concat("INSERT INTO `discord_account_links` (`account_id`, `discord_user_id`, ",
++            "`main_player_id`, `linked_at`, `updated_at`) VALUES (", accountId, ", ", db.escapeString(discordUserId),
++            ", ", characters[1] and tostring(characters[1].id) or "NULL", ", ", now, ", ", now, ");"))) then
++        fail("internal", "the link could not be saved")
++    end
++
++    notifyAccount(accountId, "Your account is now linked to Discord.")
++    local link = DiscordAccounts.getLinkByAccount(accountId)
++    if (not link) then
++        fail("internal", "the link could not be saved")
++    end
++    return linkSummary(link)
++end
++
++local function handleAccount(params)
++    requireEnabled()
++    local link = DiscordAccounts.getLinkByDiscordUser(requireDiscordUserId(params))
++    if (not link) then
++        return {linked = false}
++    end
++    return linkSummary(link)
++end
++
++local function handleCharacters(params)
++    requireEnabled()
++    local link = DiscordAccounts.getLinkByDiscordUser(requireDiscordUserId(params))
++    if (not link) then
++        return {linked = false}
++    end
++
++    local characters = DiscordAccounts.getCharacters(link.account_id)
++    local main = resolveMain(link, characters)
++    local out = JSON.array()
++    for _, character in ipairs(characters) do
++        local level, online = liveLevel(character)
++        out[#out + 1] = {name = character.name, level = level, vocation = vocationName(character.vocation),
++            main = main ~= nil and character.id == main.id, online = online}
++    end
++    return {linked = true, characters = out}
++end
++
++local function handleSetMain(params)
++    requireEnabled()
++    local link = DiscordAccounts.getLinkByDiscordUser(requireDiscordUserId(params))
++    if (not link) then
++        fail("not_linked", "this Discord user is not linked")
++    end
++
++    local name = DiscordBridge.sanitizeText(params.character, 30)
++    if (name == "") then
++        fail("invalid_params", "character is required")
++    end
++
++    for _, character in ipairs(DiscordAccounts.getCharacters(link.account_id)) do
++        if (string.lower(character.name) == string.lower(name)) then
++            if (character.id ~= link.main_player_id and not setMainPlayer(link.account_id, character.id)) then
++                fail("internal", "the main character could not be saved")
++            end
++            link.main_player_id = character.id
++            return linkSummary(link)
++        end
++    end
++    fail("not_owned", "that character does not belong to the linked account")
++end
++
++local function handleUnlink(params)
++    requireEnabled()
++    local link = DiscordAccounts.getLinkByDiscordUser(requireDiscordUserId(params))
++    if (not link) then
++        return {unlinked = false}
++    end
++    if (not DiscordAccounts.unlinkAccount(link.account_id)) then
++        fail("internal", "the link could not be removed")
++    end
++    notifyAccount(link.account_id, "Your account is no longer linked to Discord.")
++    return {unlinked = true}
++end
++
++-- Paged list of all links, for the bot's periodic role and nickname resync.
++local function handleList(params)
++    requireEnabled()
++    local offset = math.max(0, math.floor(tonumber(params.offset) or 0))
++    local limit = math.min(MAX_LIST_LIMIT, math.max(1, math.floor(tonumber(params.limit) or MAX_LIST_LIMIT)))
++    local links = queryRows(string.concat("SELECT `account_id`, `discord_user_id`, IFNULL(`main_player_id`, 0) AS ",
++        "`main_player_id`, `linked_at`, `updated_at` FROM `discord_account_links` ORDER BY `account_id` ASC LIMIT ",
++        limit + 1, " OFFSET ", offset, ";"), LINK_FIELDS)
++
++    local out = JSON.array()
++    for i = 1, math.min(#links, limit) do
++        out[#out + 1] = linkSummary(links[i])
++    end
++    return {links = out, nextOffset = #links > limit and offset + limit or nil}
++end
++
++-- Online sessions, so the bot can close sessions it missed. No IP addresses.
++local function handleSessions()
++    local sessions = JSON.array()
++    for _, cid in ipairs(getPlayersOnline()) do
++        local sessionId = getDiscordSessionId(getPlayerGUID(cid))
++        if (sessionId ~= "") then
++            sessions[#sessions + 1] = {sessionId = sessionId, character = getCreatureName(cid), level = getPlayerLevel(cid)}
++        end
++    end
++    return {sessions = sessions, playersOnline = #getPlayersOnline()}
++end
++
++DiscordBridge.registerHandler("link.redeem", handleRedeem)
++DiscordBridge.registerHandler("link.account", handleAccount)
++DiscordBridge.registerHandler("link.characters", handleCharacters)
++DiscordBridge.registerHandler("link.setMain", handleSetMain)
++DiscordBridge.registerHandler("link.unlink", handleUnlink)
++DiscordBridge.registerHandler("link.list", handleList)
++DiscordBridge.registerHandler("admin.sessions", handleSessions)
+diff --git a/core/server/data/talkactions/scripts/discord.lua b/core/server/data/talkactions/scripts/discord.lua
+new file mode 100644
+index 0000000..1f58787
+--- /dev/null
++++ b/core/server/data/talkactions/scripts/discord.lua
+@@ -0,0 +1,104 @@
++-- !discord link | status | unlink | help
++-- Links the account of the speaking character to Discord (see 058-discordAccounts.lua).
++-- Everything is sent only to the speaker; the command text is never shown to others.
++
++local UNLINK_CONFIRM_SECONDS = 60
++local pendingUnlink = {}
++
++local function say(cid, text)
++    doPlayerSendTextMessage(cid, MESSAGE_STATUS_CONSOLE_BLUE, text)
++end
++
++local CODE_ERRORS = {
++    rate_limited = "You requested a code too recently. Please wait a moment and try again.",
++    disabled = "Discord linking is disabled on this server.",
++}
++
++local function showHelp(cid, words)
++    say(cid, string.concat("Discord account linking:\n",
++        words, " link - get a one-time code, then use /link in the PokeVerse Discord server\n",
++        words, " status - show whether this account is linked\n",
++        words, " unlink - remove the link (asks for confirmation)"))
++end
++
++local function requestCode(cid, accountId)
++    if (DiscordAccounts.getLinkByAccount(accountId)) then
++        say(cid, "This account is already linked to Discord. Use \"!discord unlink\" first to link another Discord user.")
++        return
++    end
++
++    local code, err = doCreateDiscordLinkCode(accountId)
++    if (not code) then
++        say(cid, CODE_ERRORS[err] or "A code could not be created right now. Please try again later.")
++        return
++    end
++
++    local text = string.concat("Your Discord link code is ", code, "\n\n",
++        "In the PokeVerse Discord server, type: /link code:", code, "\n",
++        "The code works once and expires in 10 minutes. Never share it with anyone.")
++    say(cid, text)
++    doPlayerPopupFYI(cid, text)
++end
++
++local function showStatus(cid, accountId)
++    local link = DiscordAccounts.getLinkByAccount(accountId)
++    if (not link) then
++        say(cid, "This account is not linked to Discord. Type \"!discord link\" to get a code.")
++        return
++    end
++    say(cid, string.concat("This account is linked to Discord since ", os.date("%Y-%m-%d", link.linked_at), "."))
++end
++
++local function unlink(cid, accountId, confirm)
++    if (not DiscordAccounts.getLinkByAccount(accountId)) then
++        doRevokeDiscordLinkCodes(accountId)
++        pendingUnlink[accountId] = nil
++        say(cid, "This account is not linked to Discord.")
++        return
++    end
++
++    local requested = pendingUnlink[accountId]
++    if (not confirm or not requested or os.time() - requested > UNLINK_CONFIRM_SECONDS) then
++        pendingUnlink[accountId] = os.time()
++        say(cid, string.concat("To remove the Discord link from this account, type \"!discord unlink confirm\" within ",
++            UNLINK_CONFIRM_SECONDS, " seconds. Your characters are not affected."))
++        return
++    end
++
++    pendingUnlink[accountId] = nil
++    local link = DiscordAccounts.unlinkAccount(accountId)
++    if (not link) then
++        say(cid, "The link could not be removed. Please try again later.")
++        return
++    end
++
++    DiscordBridge.emit({kind = "account_link", scope = "account", action = "unlinked", source = "game",
++        discordUserId = link.discord_user_id})
++    say(cid, "This account is no longer linked to Discord.")
++end
++
++function onSay(cid, words, param, channel)
++    if (not DiscordAccounts.isEnabled()) then
++        say(cid, "Discord linking is not available on this server.")
++        return true
++    end
++
++    local accountId = getPlayerAccountId(cid)
++    local args = {}
++    for word in string.gmatch(string.lower(param or ""), "%S+") do
++        args[#args + 1] = word
++    end
++    local action = args[1] or ""
++    words = string.sub(words, 1, 1) .. "discord"
++
++    if (action == "link") then
++        requestCode(cid, accountId)
++    elseif (action == "status") then
++        showStatus(cid, accountId)
++    elseif (action == "unlink") then
++        unlink(cid, accountId, args[2] == "confirm")
++    else
++        showHelp(cid, words)
++    end
++    return true
++end
+diff --git a/core/server/data/talkactions/scripts/kick.lua b/core/server/data/talkactions/scripts/kick.lua
+index 7fdb34e..957278d 100644
+--- a/core/server/data/talkactions/scripts/kick.lua
++++ b/core/server/data/talkactions/scripts/kick.lua
+@@ -21,6 +21,7 @@ function onSay(cid, words, param, channel)
+ 	end
+ 
+ 	doPlayerSendTextMessage(cid, MESSAGE_STATUS_CONSOLE_BLUE, getCreatureName(pid) .. " has been kicked.")
++	doSetDiscordLogoutReason(pid, "kick")
+ 	doRemoveCreature(pid)
+ 	return true
+ end
+diff --git a/core/server/data/talkactions/scripts/masskick.lua b/core/server/data/talkactions/scripts/masskick.lua
+index 8ee9d32..f06b604 100644
+--- a/core/server/data/talkactions/scripts/masskick.lua
++++ b/core/server/data/talkactions/scripts/masskick.lua
+@@ -18,6 +18,7 @@ function onSay(cid, words, param, channel)
+ 	local tmp = 0
+ 	for i, tid in ipairs(getSpectators(getCreaturePosition(cid), t[1], t[2], multifloor)) do
+ 		if(isPlayer(tid) and tid ~= cid and getPlayerAccess(tid) < getPlayerAccess(cid)) then
++			doSetDiscordLogoutReason(tid, "kick")
+ 			doRemoveCreature(tid)
+ 			tmp = tmp + 1
+ 		end
+diff --git a/core/server/data/talkactions/talkactions.xml b/core/server/data/talkactions/talkactions.xml
+index 9577711..60cd079 100644
+--- a/core/server/data/talkactions/talkactions.xml
++++ b/core/server/data/talkactions/talkactions.xml
+@@ -114,6 +114,7 @@
+ 	<talkaction log="yes" words="/chatban" access="1" event="script" value="../../lib/ps/events/talkactions/chatBan.lua"/>
+ 
+ 	<!-- Players -->
++	<talkaction words="!discord;/discord" case-sensitive="no" event="script" value="discord.lua" description="Link your account to the PokeVerse Discord server."/>
+ 	<talkaction words="/autoTrade" case-sensitive="no" event="script" value="../../lib/ps/events/talkactions/trade.lua" description="Automatic yell offerts on trade channel."/>
+ 
+ <!--
+diff --git a/core/server/schemas/pokeverse-extensions.sql b/core/server/schemas/pokeverse-extensions.sql
+index 19a28a8..c3ee722 100644
+--- a/core/server/schemas/pokeverse-extensions.sql
++++ b/core/server/schemas/pokeverse-extensions.sql
+@@ -697,3 +697,25 @@ CREATE TABLE IF NOT EXISTS `datalog_slot_machine` (
+   `gain` INT NOT NULL DEFAULT 0,
+   PRIMARY KEY (`id`)
+ ) ENGINE=InnoDB DEFAULT CHARSET=latin1;
++
++-- ---------------------------------------------------------------------------
++-- Discord account links (PokeVerse-Discord bot, docs/discord-bridge.md)
++-- ---------------------------------------------------------------------------
++-- One row per linked game account; the game server is the only writer. The Discord user ID
++-- is a snowflake stored as text so it never loses precision. `main_player_id` is the
++-- character used as the Discord nickname; NULL means "not chosen", and the bridge then uses
++-- the account's first-created character (lowest `players`.`id`).
++-- Rollback: DROP TABLE `discord_account_links`; no other table refers to it and no existing
++-- table was changed.
++CREATE TABLE IF NOT EXISTS `discord_account_links` (
++  `account_id` INT NOT NULL,
++  `discord_user_id` VARCHAR(20) NOT NULL,
++  `main_player_id` INT NULL DEFAULT NULL,
++  `linked_at` BIGINT UNSIGNED NOT NULL,
++  `updated_at` BIGINT UNSIGNED NOT NULL,
++  PRIMARY KEY (`account_id`),
++  UNIQUE KEY `discord_user_id` (`discord_user_id`),
++  KEY `main_player_id` (`main_player_id`),
++  CONSTRAINT `discord_account_links_account` FOREIGN KEY (`account_id`) REFERENCES `accounts` (`id`) ON DELETE CASCADE,
++  CONSTRAINT `discord_account_links_main` FOREIGN KEY (`main_player_id`) REFERENCES `players` (`id`) ON DELETE SET NULL
++) ENGINE = InnoDB;
+-- 
+2.43.0
+
