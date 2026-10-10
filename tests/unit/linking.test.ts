@@ -157,6 +157,19 @@ describe("link service", () => {
     expect(nick.problems[0]).toMatch(/Manage Nicknames/);
   });
 
+  it("keeps tracking an unlinked member until their roles could be removed", async () => {
+    const { service, guild, member, verified, store } = setup();
+    await service.sync(LINKED_USER, linkSummary(), "always");
+    guild.failMemberOps.push(missingPermissionsError());
+    const failed = await service.sync(LINKED_USER, undefined);
+    expect(failed.problems).toHaveLength(1);
+    expect(member.roleIds).toContain(verified.id);
+    expect(store.get().linkedMembers[LINKED_USER]).toBe("Red Trainer");
+    await service.resyncAll();
+    expect(member.roleIds).not.toContain(verified.id);
+    expect(store.get().linkedMembers[LINKED_USER]).toBeUndefined();
+  });
+
   it("explains roles that are not set up and rethrows unexpected errors", async () => {
     const { service, store, guild } = setup();
     store.update((state) => {

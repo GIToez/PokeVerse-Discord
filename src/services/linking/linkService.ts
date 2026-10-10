@@ -104,6 +104,11 @@ export class LinkService {
       await this.setRole(guild, member, premium, config.premiumRoleName, link?.premium === true, result);
     }
     await this.syncNickname(guild, member, link, mode, result);
+    // Keep tracking an unlinked member until their roles and nickname are cleaned up, so the
+    // next resync retries.
+    if (!link && result.problems.length === 0) {
+      this.forget(discordUserId);
+    }
 
     if (result.added.length || result.removed.length || result.nickname === "set" || result.nickname === "reset") {
       this.options.metrics.increment("linking.members_updated");
@@ -225,7 +230,6 @@ export class LinkService {
       if (lastSet && member.nickname === lastSet && member.nicknameManageable) {
         await this.writeNickname(guild, member, null, result, "reset");
       }
-      this.forget(member.id);
       return;
     }
     const desired = this.options.config.nicknameSync && link.main ? link.main.name.slice(0, MAX_NICKNAME) : undefined;
