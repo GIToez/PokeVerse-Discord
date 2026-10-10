@@ -175,6 +175,9 @@ if ($serverDir) {
     Write-Host "WARNING: this game server build has no Discord bridge settings in config.lua." -ForegroundColor Yellow
     Write-Host "         Use a game build that includes the Discord bridge (see docs/GAME_INTEGRATION.md)." -ForegroundColor Yellow
   }
+  elseif ($config -notmatch 'discordBridgeAccountLinking') {
+    Write-Host "Note: this game server build has no account linking yet; /link and #player-activity stay inactive." -ForegroundColor Yellow
+  }
   $luaFile = Set-LuaLocalConfig $serverDir $secret $port
   Protect-File $luaFile
   Write-Host "Wrote the bridge settings to $luaFile" -ForegroundColor Green
@@ -245,4 +248,6 @@ if (-not $SkipBridgeCheck) {
 
 Write-Host ""
 Write-Host "Done. Run start-discord-dev.bat to start the bot. It creates the Discord channels on first start." -ForegroundColor Green
+Write-Host "For /link: give the bot Manage Roles and Manage Nicknames, and drag its role above" -ForegroundColor Green
+Write-Host "the Verified Trainer and Ace Trainer roles (Server Settings > Roles)." -ForegroundColor Green
 exit 0
