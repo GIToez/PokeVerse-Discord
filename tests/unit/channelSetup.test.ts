@@ -1,7 +1,7 @@
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { ChannelSetup, formatSetupReport } from "../../src/setup/channelSetup.js";
-import { CATEGORY_NAME, CHANNEL_DEFINITIONS } from "../../src/setup/channels.js";
+import { ADMIN_CATEGORY_NAME, CATEGORY_NAME, CHANNEL_DEFINITIONS } from "../../src/setup/channels.js";
 import { inviteUrl, requiredPermissionBits } from "../../src/setup/invite.js";
 import { silentLogger } from "../../src/utils/logger.js";
 import { StateStore } from "../../src/utils/stateStore.js";
@@ -173,5 +173,94 @@ describe("invite link", () => {
     expect(url.searchParams.get("scope")).toBe("bot applications.commands");
     expect(url.searchParams.get("permissions")).toBe(bits.toString());
     expect(url.searchParams.get("guild_id")).toBe(DEV_GUILD);
+  });
+});
+
+describe("private admin logs and linking roles", () => {
+  const VIEWER_ROLE = "800000000000000001";
+  const ADMIN_USER = "800000000000000002";
+
+  function phase2(file = join(tempDir(), "state.json")) {
+    const store = new StateStore(file, "development");
+    const channelSetup = new ChannelSetup(store, silentLogger, {
+      activity: { enabled: true, viewerRoleIds: [VIEWER_ROLE], viewerUserIds: [] },
+      adminRoleIds: [],
+      adminUserIds: [ADMIN_USER],
+      linking: { enabled: true, roles: [{ key: "verified", name: "Verified Trainer" }, { key: "premium", name: "Ace Trainer" }] },
+    });
+    const guild = new FakeGuild();
+    guild.permissions = [...guild.permissions, "ManageRoles", "ManageNicknames"];
+    guild.addRoleInfo({ id: VIEWER_ROLE, name: "Staff" });
+    return { store, channelSetup, guild };
+  }
+
+  it("creates a private Admin Logs category with #player-activity and the roles", async () => {
+    const { store, channelSetup, guild } = phase2();
+    const report = await channelSetup.run(guild);
+    expect(report.ok).toBe(true);
+    expect(report.adminCategoryAction).toBe("created");
+    const admin = guild.created.find((channel) => channel.name === ADMIN_CATEGORY_NAME)!;
+    const activity = guild.created.find((channel) => channel.name === "player-activity")!;
+    expect(activity.parentId).toBe(admin.id);
+    for (const channel of [admin, activity]) {
+      expect(channel.overwrites).toEqual([
+        { id: EVERYONE, type: "role", allow: [], deny: ["ViewChannel"] },
+        { id: BOT_USER, type: "member", allow: ["ViewChannel", "SendMessages", "EmbedLinks", "ReadMessageHistory"], deny: [] },
+        { id: VIEWER_ROLE, type: "role", allow: ["ViewChannel", "ReadMessageHistory"], deny: ["SendMessages"] },
+        { id: ADMIN_USER, type: "member", allow: ["ViewChannel", "ReadMessageHistory"], deny: ["SendMessages"] },
+      ]);
+    }
+    expect(report.channels.find((channel) => channel.purpose === "playerActivity")!.privacyProblems).toEqual([]);
+    expect(report.roles.map((role) => [role.name, role.action])).toEqual([["Verified Trainer", "created"], ["Ace Trainer", "created"]]);
+    expect(store.get().roles.verified).toBeDefined();
+    expect(store.get().roles.premium).toBeDefined();
+    const text = formatSetupReport(report);
+    expect(text).toContain(`Private category "${ADMIN_CATEGORY_NAME}": created`);
+    expect(text).toContain(`<#${activity.id}>: created (private)`);
+
+    const again = await channelSetup.run(guild);
+    expect(again.roles.every((role) => role.action === "kept")).toBe(true);
+    expect(guild.roles).toHaveLength(3);
+  });
+
+  it("reports an adopted channel that is not private and Administrator roles", async () => {
+    const { channelSetup, guild } = phase2();
+    const category = guild.add({ id: "500000000000000101", name: "admin logs", kind: "category", parentId: null });
+    guild.add({ id: "500000000000000102", name: "player-activity", kind: "text", parentId: category.id });
+    guild.addRoleInfo({ name: "Owner", administrator: true });
+    const report = await channelSetup.run(guild);
+    expect(report.ok).toBe(false);
+    const channel = report.channels.find((item) => item.purpose === "playerActivity")!;
+    expect(channel.action).toBe("adopted");
+    expect(channel.privacyProblems).toEqual(["@everyone can see the channel"]);
+    expect(channel.administratorRoles).toEqual(["Owner"]);
+    const text = formatSetupReport(report);
+    expect(text).toContain("NOT PRIVATE, nothing is posted until fixed: @everyone can see the channel");
+    expect(text).toContain("Roles with Administrator always see it: Owner");
+  });
+
+  it("adopts roles by name and flags roles above the bot", async () => {
+    const { channelSetup, guild, store } = phase2();
+    const existing = guild.addRoleInfo({ name: "verified trainer", assignable: false });
+    guild.addRoleInfo({ name: "Ace Trainer", managed: true });
+    const report = await channelSetup.run(guild);
+    const verified = report.roles.find((role) => role.key === "verified")!;
+    expect(verified).toMatchObject({ action: "adopted", roleId: existing.id, assignable: false });
+    expect(report.roles.find((role) => role.key === "premium")!.action).toBe("created");
+    expect(store.get().roles.verified).toBe(existing.id);
+    expect(report.ok).toBe(false);
+    expect(formatSetupReport(report)).toContain("move the bot's role above it");
+  });
+
+  it("needs Manage Roles and Manage Nicknames only when linking is enabled", async () => {
+    const { channelSetup, guild } = phase2();
+    guild.permissions = guild.permissions.filter((permission) => permission !== "ManageRoles" && permission !== "ManageNicknames");
+    const report = await channelSetup.run(guild);
+    expect(report.missingGuildPermissions).toEqual(["ManageRoles", "ManageNicknames"]);
+    expect(report.roles.every((role) => role.action === "failed" && role.error === "Missing Manage Roles permission.")).toBe(true);
+    const plain = await setup().setup.run(new FakeGuild());
+    expect(plain.missingGuildPermissions).toEqual([]);
+    expect(plain.roles).toEqual([]);
+    expect(plain.channels.some((channel) => channel.purpose === "playerActivity")).toBe(false);
   });
 });

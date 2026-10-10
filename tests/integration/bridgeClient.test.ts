@@ -164,4 +164,43 @@ describe("bridge client", () => {
     await waitFor(() => infos.length === 1);
     expect(infos[0]).toMatchObject({ restarted: true, previousBootId: "boot6" });
   });
+
+  it("reports the game's optional features only while connected", async () => {
+    const server = await startServer({ features: ["playerSessions", "accountLinking", "somethingNewer"] });
+    const { client, connections } = startClient(server.port);
+    await waitFor(() => client.connected);
+    expect(connections[0]!.features).toEqual(["playerSessions", "accountLinking", "somethingNewer"]);
+    expect(client.hasFeature("accountLinking")).toBe(true);
+    expect(client.hasFeature("gts")).toBe(false);
+    await server.stop();
+    await waitFor(() => !client.connected);
+    expect(client.hasFeature("accountLinking")).toBe(false);
+  });
+
+  it("treats a game without the features field as having none", async () => {
+    const server = await startServer();
+    const { client, connections } = startClient(server.port);
+    await waitFor(() => client.connected);
+    expect(connections[0]!.features).toEqual([]);
+    expect(client.hasFeature("playerSessions")).toBe(false);
+  });
+
+  it("validates session and account events and keeps 64-bit Discord ids exact", async () => {
+    const server = await startServer({
+      onRequest: (method, params) => (method === "link.account" ? { linked: false, echo: params.discordUserId } : undefined),
+    });
+    const { client, events } = startClient(server.port);
+    await waitFor(() => client.connected);
+    server.emit({ kind: "player_login", scope: "admin", sessionId: "boot1-1", character: "Red", level: 5, accountId: 2, loginTime: 1, ip: "10.0.0.1" });
+    server.emit({ kind: "player_login", scope: "admin", character: "No Session", level: 5, accountId: 2, loginTime: 1 });
+    server.emit({ kind: "account_link", scope: "account", action: "unlinked", discordUserId: "18446744073709551615" });
+    server.sendRaw('{"type":"event","id":"boot1-90","time":1,"event":{"kind":"account_link","scope":"account","action":"unlinked","discordUserId":123456789012345678}}\n');
+    server.emit({ kind: "account_characters", scope: "account", discordUserId: "123456789012345678", change: "deleted", character: "Red" });
+    await waitFor(() => events.length === 3);
+    expect(events.map((event) => event.event.kind)).toEqual(["player_login", "account_link", "account_characters"]);
+    expect((events[1]!.event as { discordUserId: string }).discordUserId).toBe("18446744073709551615");
+    await client.request("link.account", { discordUserId: "18446744073709551615" }, z.object({ linked: z.boolean() }));
+    const sent = server.received.find((message) => (message as { method?: string }).method === "link.account") as { params: { discordUserId: unknown } };
+    expect(sent.params.discordUserId).toBe("18446744073709551615");
+  });
 });

@@ -13,12 +13,15 @@ import { ChannelSetup } from "../../src/setup/channelSetup.js";
 import { DeliveryQueue } from "../../src/utils/deliveryQueue.js";
 import { silentLogger } from "../../src/utils/logger.js";
 import { Metrics } from "../../src/utils/metrics.js";
-import { DEV_GUILD, FakeChannels, FakeGame, FakeGuild, makeConfig, makeStore, tempDir } from "../helpers/fakes.js";
+import { LinkCommands } from "../../src/commands/linkCommands.js";
+import { isPrivateCommand } from "../../src/commands/router.js";
+import { LinkService } from "../../src/services/linking/linkService.js";
+import { DEV_GUILD, FakeChannels, FakeGame, FakeGuild, FakeLinkApi, LINKED_USER, makeConfig, makeStore, tempDir } from "../helpers/fakes.js";
 
 const ADMIN = "700000000000000001";
 const MEMBER = "700000000000000002";
 
-function setup(overrides: Record<string, string> = {}, artworkDir?: string) {
+function setup(overrides: Record<string, string> = {}, artworkDir?: string, withLinking = false) {
   const config = makeConfig(overrides);
   const store = makeStore(config);
   const game = new FakeGame();
@@ -26,6 +29,22 @@ function setup(overrides: Record<string, string> = {}, artworkDir?: string) {
   const metrics = new Metrics();
   const guild = new FakeGuild();
   const queue = new DeliveryQueue({ name: "a", maxSize: 10, maxAttempts: 1, retryDelayMs: 1, logger: silentLogger, metrics });
+  const links = new FakeLinkApi();
+  const service = new LinkService({
+    config: { verifiedRoleName: "Verified Trainer", premiumRoleEnabled: true, premiumRoleName: "Ace Trainer", nicknameSync: true, resyncMinutes: 0 },
+    links,
+    guild: () => guild,
+    store,
+    logger: silentLogger,
+    metrics,
+  });
+  const linking = withLinking
+    ? {
+        commands: new LinkCommands({ links, service, roleNames: { verified: "Verified Trainer", premium: "Ace Trainer" }, logger: silentLogger, metrics }),
+        service,
+        api: links,
+      }
+    : undefined;
   const announcer = new Announcer({ broadcasts: true, restartWarnings: true, maxEventAgeSeconds: 600, channels, queue, logger: silentLogger, metrics });
   const status = new StatusService({ game, channels, store, refreshSeconds: 60, logger: silentLogger, metrics });
   const router = new CommandRouter({
@@ -41,6 +60,7 @@ function setup(overrides: Record<string, string> = {}, artworkDir?: string) {
     queueSizes: () => ({ chat: 0 }),
     logger: silentLogger,
     metrics,
+    linking,
   });
   const run = (commandName: string, options: Record<string, string> = {}, extra: Partial<CommandInput> = {}) =>
     router.handle({
@@ -50,7 +70,7 @@ function setup(overrides: Record<string, string> = {}, artworkDir?: string) {
       user: { id: MEMBER, displayName: "Member", roleIds: [], manageGuild: false },
       ...extra,
     });
-  return { config, store, game, channels, guild, router, run, metrics };
+  return { config, store, game, channels, guild, router, run, metrics, links };
 }
 
 const adminUser = { id: ADMIN, displayName: "Admin", roleIds: [], manageGuild: true };
@@ -226,3 +246,63 @@ describe("command safety", () => {
     expect(() => parseArgs(["--nope"])).toThrow(/Unknown argument/);
   });
 });
+
+describe("account linking commands", () => {
+  it("routes the linking commands only when linking is enabled", async () => {
+    const off = setup();
+    expect((await off.run("account")).message.content).toBe("Unknown command.");
+    const on = setup({}, undefined, true);
+    on.links.link(MEMBER);
+    const response = await on.run("account");
+    expect(response.ephemeral).toBe(true);
+    expect(response.message.embeds![0]!.title).toBe("Your PokeVerse account");
+  });
+
+  it("marks admin and linking replies as private", () => {
+    for (const name of ["pokeverse", "link", "unlink", "account", "characters", "main", "sync"]) {
+      expect(isPrivateCommand(name)).toBe(true);
+    }
+    for (const name of ["trainer", "pokemon", "server"]) {
+      expect(isPrivateCommand(name)).toBe(false);
+    }
+  });
+
+  it("lets admins remove a link for recovery", async () => {
+    const { run, links } = setup({}, undefined, true);
+    links.link(LINKED_USER);
+    expect((await run("pokeverse", { user_id: LINKED_USER }, { subcommand: "unlink" })).message.content).toMatch(/only for PokeVerse admins|not allowed|permission/i);
+    expect(links.accounts.has(LINKED_USER)).toBe(true);
+    expect((await run("pokeverse", { user_id: "abc" }, { subcommand: "unlink", user: adminUser })).message.content).toMatch(/17-20 digits/);
+    const done = await run("pokeverse", { user_id: LINKED_USER }, { subcommand: "unlink", user: adminUser });
+    expect(done.message.embeds![0]!.description).toMatch(/is unlinked/);
+    expect(links.accounts.has(LINKED_USER)).toBe(false);
+    const again = await run("pokeverse", { user_id: LINKED_USER }, { subcommand: "unlink", user: adminUser });
+    expect(again.message.embeds![0]!.description).toMatch(/has no linked game account/);
+    expect((await setup().run("pokeverse", { user_id: LINKED_USER }, { subcommand: "unlink", user: adminUser })).message.content).toMatch(/disabled/);
+  });
+
+  it("handles unlink buttons only in the configured guild", async () => {
+    const { router, links } = setup({}, undefined, true);
+    links.link(MEMBER);
+    const user = { id: MEMBER, displayName: "Member", roleIds: [], manageGuild: false };
+    const expires = Math.floor(Date.now() / 1000) + 60;
+    expect((await router.handleComponent({ customId: `unlink:confirm:${MEMBER}:${expires}`, guildId: "100000000000000555", user })).message.content).toMatch(/configured server/);
+    expect((await router.handleComponent({ customId: "other:thing", guildId: DEV_GUILD, user })).message.content).toMatch(/no longer active/);
+    links.connected = false;
+    expect((await router.handleComponent({ customId: `unlink:confirm:${MEMBER}:${expires}`, guildId: DEV_GUILD, user })).message.content).toMatch(/offline/);
+    links.connected = true;
+    links.failNext.push("internal");
+    expect((await router.handleComponent({ customId: `unlink:confirm:${MEMBER}:${expires}`, guildId: DEV_GUILD, user })).message.content).toMatch(/Something went wrong/);
+    expect(links.accounts.has(MEMBER)).toBe(true);
+  });
+
+  it("autocompletes /main from the user's own characters only", async () => {
+    const { router, links } = setup({}, undefined, true);
+    links.link(MEMBER);
+    expect(await router.autocomplete("main", "character", "blue", MEMBER)).toEqual([{ name: "Blue Trainer (level 10)", value: "Blue Trainer" }]);
+    expect(await router.autocomplete("main", "character", "", "700000000000000003")).toEqual([]);
+    links.connected = false;
+    expect(await router.autocomplete("main", "character", "", MEMBER)).toEqual([]);
+  });
+});
+

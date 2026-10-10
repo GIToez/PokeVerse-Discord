@@ -5,6 +5,8 @@ export interface FakeBridgeOptions {
   secret: string;
   bootId?: string;
   serverName?: string;
+  /** Optional features announced in the welcome message (omitted when undefined, like older game builds). */
+  features?: string[];
   /** Handles requests; return a result or throw { code, message }. */
   onRequest?: (method: string, params: Record<string, unknown>) => unknown;
 }
@@ -117,7 +119,7 @@ export class FakeBridgeServer {
           }
         }
         connection.authenticated = true;
-        write({ type: "welcome", protocol: 1, bootId: this.bootId, serverName: this.options.serverName ?? "PokeVerse", queued: 0 });
+        write({ type: "welcome", protocol: 1, bootId: this.bootId, serverName: this.options.serverName ?? "PokeVerse", queued: 0, ...(this.options.features ? { features: this.options.features } : {}) });
       } else {
         write({ type: "error", code: "auth_failed" });
         connection.socket.end();

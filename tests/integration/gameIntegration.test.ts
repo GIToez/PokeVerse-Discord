@@ -3,7 +3,9 @@ import { GameIntegration } from "../../src/bot/integration.js";
 import { silentLogger } from "../../src/utils/logger.js";
 import { Metrics } from "../../src/utils/metrics.js";
 import { FakeBridgeServer, waitFor } from "../helpers/fakeBridgeServer.js";
-import { DEV_GUILD, FakeChannels, FakeGuild, RATTATA, TRAINER, makeConfig, makeStore } from "../helpers/fakes.js";
+import type { LinkSummary } from "../../src/integrations/pokeverse/protocol.js";
+import type { StateStore } from "../../src/utils/stateStore.js";
+import { DEV_GUILD, FakeChannels, FakeGuild, LINKED_USER, RATTATA, TRAINER, linkSummary, makeConfig, makeStore } from "../helpers/fakes.js";
 
 const SECRET = "integration-secret-0123456789";
 const cleanup: Array<() => Promise<void> | void> = [];
@@ -139,5 +141,134 @@ describe("bot <-> game bridge pipeline", () => {
     await new Promise((resolve) => setTimeout(resolve, 100));
     await integration.idle();
     expect(channels.channel("catches").sent).toHaveLength(0);
+  });
+});
+
+const ADMIN_ID = "700000000000000001";
+const OTHER_USER = "223456789012345678";
+
+/** The bot pipeline against a fake game that supports player sessions and account linking. */
+async function phase2(
+  options: { features?: string[]; before?: (guild: FakeGuild, links: Map<string, LinkSummary>, store: StateStore) => void } = {},
+) {
+  const links = new Map<string, LinkSummary>();
+  const requests: string[] = [];
+  let online: Array<{ sessionId: string; character: string; level: number }> = [];
+  const server: FakeBridgeServer = new FakeBridgeServer({
+    secret: SECRET,
+    features: options.features ?? ["playerSessions", "accountLinking"],
+    onRequest: (method, params): unknown => {
+      requests.push(method);
+      switch (method) {
+        case "server.status":
+          return { serverName: "PokeVerse", state: "normal", playersOnline: online.length, maxPlayers: 1000, uptime: 120, bootId: server.bootId };
+        case "link.account":
+          return links.get(String(params.discordUserId)) ?? { linked: false };
+        case "link.list":
+          return { links: [...links.values()] };
+        case "admin.sessions":
+          return { sessions: online, playersOnline: online.length };
+        default:
+          throw { code: "unknown_method" };
+      }
+    },
+  });
+  await server.start();
+  cleanup.push(() => server.stop());
+  const config = makeConfig({ BRIDGE_PORT: String(server.port), BRIDGE_SECRET: SECRET, DISCORD_ADMIN_USER_IDS: ADMIN_ID });
+  const store = makeStore(config);
+  const channels = new FakeChannels();
+  const guild = new FakeGuild();
+  guild.permissions = [...guild.permissions, "ManageRoles", "ManageNicknames"];
+  const integration = new GameIntegration({ config, store, channels, guild: () => guild, logger: silentLogger, metrics: new Metrics(), reconnectSyncDelayMs: 50 });
+  // What /pokeverse setup creates: the private channel and the roles.
+  const report = await integration.setup.run(guild);
+  const activityId = report.channels.find((channel) => channel.purpose === "playerActivity")!.channelId!;
+  const sink = channels.channel("playerActivity");
+  guild.channels.find((channel) => channel.id === activityId)!.id = sink.id;
+  options.before?.(guild, links, store);
+  integration.start();
+  cleanup.push(() => integration.stop());
+  await waitFor(() => integration.game.connected, 3000, "bridge connection");
+  return {
+    server, integration, guild, store, sink, links, requests,
+    setOnline: (sessions: typeof online) => {
+      online = sessions;
+    },
+  };
+}
+
+describe("player activity and account linking pipeline", () => {
+  it("posts logins and logouts to the private channel without duplicates", async () => {
+    const { server, integration, sink } = await phase2();
+    const login = { kind: "player_login", scope: "admin", sessionId: "boot1-1", character: "Red", level: 5, accountId: 2, loginTime: 1_700_000_000, ip: "203.0.113.7", playersOnline: 1 };
+    server.emit(login);
+    server.emit(login);
+    server.emit({ ...login, kind: "player_logout", logoutTime: 1_700_000_100, duration: 100, reason: "logout", playersOnline: 0 });
+    await waitFor(() => sink.sent.length === 2, 3000, "activity posts");
+    await integration.idle();
+    expect(sink.sent.map((item) => item.message.embeds![0]!.title)).toEqual(["Login", "Logout"]);
+  });
+
+  it("closes sessions of a previous game run after a restart", async () => {
+    const { server, sink } = await phase2();
+    server.emit({ kind: "player_login", scope: "admin", sessionId: "boot1-1", character: "Red", level: 5, accountId: 2, loginTime: 1_700_000_000 });
+    await waitFor(() => sink.sent.length === 1);
+    await server.restart("boot2");
+    await waitFor(() => sink.sent.length === 2, 5000, "restart close");
+    expect(sink.sent[1]!.message.embeds![0]!.title).toBe("Session ended by a server restart");
+  });
+
+  it("syncs a member when the game reports a link change and when they rejoin", async () => {
+    const { server, integration, guild, store, links } = await phase2();
+    const member = guild.addMember(LINKED_USER);
+    links.set(LINKED_USER, linkSummary({ premium: true }));
+    server.emit({ kind: "account_link", scope: "account", action: "linked", discordUserId: LINKED_USER });
+    await waitFor(() => member.nickname === "Red Trainer", 3000, "nickname after link");
+    expect(member.roleIds).toEqual([store.get().roles.verified, store.get().roles.premium]);
+
+    member.nickname = "Custom";
+    links.set(LINKED_USER, linkSummary({ premium: false }));
+    server.emit({ kind: "account_characters", scope: "account", discordUserId: LINKED_USER, change: "created", character: "Green" });
+    await waitFor(() => member.roleIds.length === 1, 3000, "premium removed");
+    await integration.idle();
+    expect(member.nickname).toBe("Custom");
+
+    member.roleIds = [];
+    integration.onMemberJoin(LINKED_USER);
+    await waitFor(() => member.nickname === "Red Trainer", 3000, "nickname after rejoin");
+    expect(member.roleIds).toEqual([store.get().roles.verified]);
+
+    links.delete(LINKED_USER);
+    server.emit({ kind: "account_link", scope: "account", action: "unlinked", source: "game", discordUserId: LINKED_USER });
+    await waitFor(() => member.nickname === null, 3000, "nickname reset after unlink");
+    expect(member.roleIds).toEqual([]);
+  });
+
+  it("resyncs all links after connecting, including members unlinked while the bot was away", async () => {
+    const { guild, store, requests, integration } = await phase2({
+      before: (guild, links, store) => {
+        guild.addMember(LINKED_USER);
+        links.set(LINKED_USER, linkSummary());
+        guild.addMember(OTHER_USER);
+        store.update((state) => {
+          state.linkedMembers[OTHER_USER] = "Old Main";
+        });
+      },
+    });
+    await waitFor(() => !(OTHER_USER in store.get().linkedMembers), 3000, "resync");
+    await integration.idle();
+    expect(requests).toContain("link.list");
+    expect(guild.members.get(LINKED_USER)!.nickname).toBe("Red Trainer");
+    expect(store.get().linkedMembers).toEqual({ [LINKED_USER]: "Red Trainer" });
+  });
+
+  it("makes no linking or session requests to a game without the features", async () => {
+    const { server, requests, guild, integration } = await phase2({ features: [] });
+    guild.addMember(LINKED_USER);
+    server.emit({ kind: "account_link", scope: "account", action: "linked", discordUserId: LINKED_USER });
+    await new Promise((resolve) => setTimeout(resolve, 200));
+    await integration.idle();
+    expect(requests.filter((method) => method.startsWith("link.") || method.startsWith("admin."))).toEqual([]);
   });
 });

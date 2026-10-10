@@ -124,3 +124,50 @@ describe("env file parser", () => {
     expect(() => parseEnvFile("A=1\nnot a pair\n")).toThrow(/line 2/);
   });
 });
+
+describe("activity log and linking configuration", () => {
+  it("has safe Phase 2 defaults when the keys are absent (production .env written by pokeverse-ctl)", () => {
+    const config = makeConfig({ DISCORD_ADMIN_USER_IDS: "700000000000000001", DISCORD_ADMIN_ROLE_IDS: "700000000000000009" });
+    expect(config.activity).toMatchObject({
+      enabled: true,
+      viewerRoleIds: ["700000000000000009"],
+      viewerUserIds: ["700000000000000001"],
+      ipMode: "full",
+      retentionDays: 30,
+      geoipDatabase: undefined,
+    });
+    expect(config.activity.file.endsWith(join("data", "activity.development.json"))).toBe(true);
+    expect(config.linking).toEqual({
+      enabled: true,
+      verifiedRoleName: "Verified Trainer",
+      premiumRoleEnabled: true,
+      premiumRoleName: "Ace Trainer",
+      nicknameSync: true,
+      resyncMinutes: 15,
+      membersIntent: false,
+    });
+    expect(describeConfig(config)).toMatchObject({ activityLog: { ip: "full", retentionDays: 30, geoip: false } });
+  });
+
+  it("uses explicit activity viewers instead of the admin lists", () => {
+    const config = makeConfig({ DISCORD_ADMIN_USER_IDS: "700000000000000001", ACTIVITY_LOG_VIEWER_ROLE_IDS: "700000000000000005" });
+    expect(config.activity.viewerRoleIds).toEqual(["700000000000000005"]);
+    expect(config.activity.viewerUserIds).toEqual([]);
+  });
+
+  it("validates Phase 2 settings", () => {
+    const problems = problemsOf(() =>
+      makeConfig({ ACTIVITY_LOG_IP: "everyone", ACTIVITY_RETENTION_DAYS: "0", ACTIVITY_LOG_VIEWER_ROLE_IDS: "staff", LINK_RESYNC_MINUTES: "-1" }),
+    ).join(" ");
+    expect(problems).toMatch(/ACTIVITY_LOG_IP/);
+    expect(problems).toMatch(/ACTIVITY_RETENTION_DAYS/);
+    expect(problems).toMatch(/ACTIVITY_LOG_VIEWER_ROLE_IDS/);
+    expect(problems).toMatch(/LINK_RESYNC_MINUTES/);
+    const custom = makeConfig({ ACTIVITY_LOG_IP: "masked", ACTIVITY_RETENTION_DAYS: "7", GEOIP_DATABASE: "geo/GeoLite2-City.mmdb", LINKING_ENABLED: "false" });
+    expect(custom.activity.ipMode).toBe("masked");
+    expect(custom.activity.retentionDays).toBe(7);
+    expect(custom.activity.geoipDatabase!.endsWith(join("geo", "GeoLite2-City.mmdb"))).toBe(true);
+    expect(custom.linking.enabled).toBe(false);
+    expect(describeConfig(custom)).toMatchObject({ linking: false });
+  });
+});
