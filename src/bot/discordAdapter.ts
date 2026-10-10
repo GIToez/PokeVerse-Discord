@@ -11,6 +11,7 @@ import {
   type Client,
   type Guild,
   type GuildBasedChannel,
+  type Role,
   type MessageCreateOptions,
   type MessageEditOptions,
   type TextChannel,
@@ -18,13 +19,16 @@ import {
 import type { StateStore } from "../utils/stateStore.js";
 import type { ChannelPurpose } from "../utils/stateStore.js";
 import type {
+  ChannelAccess,
   ChannelDirectory,
   ChannelSink,
   GuildChannelInfo,
   GuildPort,
+  MemberInfo,
   OutgoingMessage,
   PermissionName,
   PermissionOverwriteSpec,
+  RoleInfo,
 } from "./ports.js";
 
 function toBits(names: PermissionName[]): bigint {
@@ -96,6 +100,23 @@ export class TextChannelSink implements ChannelSink {
       throw error;
     }
   }
+
+  async delete(messageId: string): Promise<boolean> {
+    try {
+      await this.channel.messages.delete(messageId);
+      return true;
+    } catch (error) {
+      if (error instanceof DiscordAPIError && error.code === RESTJSONErrorCodes.UnknownMessage) {
+        return false;
+      }
+      throw error;
+    }
+  }
+}
+
+function isUnknownMember(error: unknown): boolean {
+  return error instanceof DiscordAPIError &&
+    (error.code === RESTJSONErrorCodes.UnknownMember || error.code === RESTJSONErrorCodes.UnknownUser);
 }
 
 /** Resolves feature channels from the saved IDs on every call, so reassignments apply immediately. */
@@ -182,5 +203,75 @@ export class DiscordGuildPort implements GuildPort {
       return undefined;
     }
     return toNames(channel.permissionsFor(me));
+  }
+
+  channelAccess(channelId: string): ChannelAccess | undefined {
+    const channel = this.guild.channels.cache.get(channelId);
+    if (!channel || channel.isThread()) {
+      return undefined;
+    }
+    const everyone = this.guild.roles.everyone;
+    const view = PermissionFlagsBits.ViewChannel;
+    const roles = [...this.guild.roles.cache.values()]
+      .filter((role) => role.id !== everyone.id && channel.permissionsFor(role).has(view))
+      .map((role) => ({
+        id: role.id,
+        name: role.name,
+        administrator: role.permissions.has(PermissionFlagsBits.Administrator),
+        ownBotRole: role.tags?.botId === this.botUserId,
+      }));
+    const members = [...channel.permissionOverwrites.cache.values()]
+      .filter((overwrite) => overwrite.type === OverwriteType.Member && overwrite.allow.has(view))
+      .map((overwrite) => overwrite.id);
+    return { everyoneCanView: channel.permissionsFor(everyone).has(view), roles, members };
+  }
+
+  private toRoleInfo(role: Role): RoleInfo {
+    const me = this.guild.members.me;
+    return {
+      id: role.id,
+      name: role.name,
+      managed: role.managed,
+      assignable: !role.managed && me !== null && me.roles.highest.comparePositionTo(role) > 0,
+    };
+  }
+
+  async listRoles(): Promise<RoleInfo[]> {
+    const roles = await this.guild.roles.fetch();
+    return [...roles.values()].filter((role) => role.id !== this.guild.roles.everyone.id).map((role) => this.toRoleInfo(role));
+  }
+
+  async createRole(name: string, reason: string): Promise<RoleInfo> {
+    const role = await this.guild.roles.create({ name, permissions: [], mentionable: false, hoist: false, reason });
+    return this.toRoleInfo(role);
+  }
+
+  async fetchMember(userId: string): Promise<MemberInfo | undefined> {
+    try {
+      const member = await this.guild.members.fetch(userId);
+      return {
+        id: member.id,
+        roleIds: [...member.roles.cache.keys()],
+        nickname: member.nickname,
+        nicknameManageable: member.manageable,
+      };
+    } catch (error) {
+      if (isUnknownMember(error)) {
+        return undefined;
+      }
+      throw error;
+    }
+  }
+
+  async addRole(userId: string, roleId: string, reason: string): Promise<void> {
+    await this.guild.members.addRole({ user: userId, role: roleId, reason });
+  }
+
+  async removeRole(userId: string, roleId: string, reason: string): Promise<void> {
+    await this.guild.members.removeRole({ user: userId, role: roleId, reason });
+  }
+
+  async setNickname(userId: string, nickname: string | null, reason: string): Promise<void> {
+    await this.guild.members.edit(userId, { nick: nickname, reason });
   }
 }

@@ -2,6 +2,8 @@ import type { PermissionName } from "../bot/ports.js";
 import type { ChannelPurpose } from "../utils/stateStore.js";
 
 export const CATEGORY_NAME = "PokeVerse Integration";
+/** Private category for staff-only channels. */
+export const ADMIN_CATEGORY_NAME = "Admin Logs";
 
 export interface ChannelDefinition {
   purpose: ChannelPurpose;
@@ -11,6 +13,8 @@ export interface ChannelDefinition {
   readOnly: boolean;
   /** Permissions the bot needs in this channel to work. */
   required: PermissionName[];
+  /** "admin" channels live in the private Admin Logs category and are verified before every post. */
+  group: "main" | "admin";
 }
 
 const POST: PermissionName[] = ["ViewChannel", "SendMessages", "EmbedLinks", "ReadMessageHistory"];
@@ -22,6 +26,7 @@ export const CHANNEL_DEFINITIONS: readonly ChannelDefinition[] = [
     topic: "Two-way chat with the in-game public channel. Be kind: everything here is shown in the game.",
     readOnly: false,
     required: ["ViewChannel", "SendMessages", "ReadMessageHistory"],
+    group: "main",
   },
   {
     purpose: "catches",
@@ -29,6 +34,7 @@ export const CHANNEL_DEFINITIONS: readonly ChannelDefinition[] = [
     topic: "Pokemon caught in PokeVerse.",
     readOnly: true,
     required: [...POST, "AttachFiles"],
+    group: "main",
   },
   {
     purpose: "shinySpawns",
@@ -36,6 +42,7 @@ export const CHANNEL_DEFINITIONS: readonly ChannelDefinition[] = [
     topic: "Shiny Pokemon sightings.",
     readOnly: true,
     required: [...POST, "AttachFiles"],
+    group: "main",
   },
   {
     purpose: "legendarySpawns",
@@ -43,6 +50,7 @@ export const CHANNEL_DEFINITIONS: readonly ChannelDefinition[] = [
     topic: "Legendary Pokemon sightings.",
     readOnly: true,
     required: [...POST, "AttachFiles"],
+    group: "main",
   },
   {
     purpose: "announcements",
@@ -50,6 +58,7 @@ export const CHANNEL_DEFINITIONS: readonly ChannelDefinition[] = [
     topic: "News, events, maintenance, GM broadcasts and restart warnings.",
     readOnly: true,
     required: POST,
+    group: "main",
   },
   {
     purpose: "serverStatus",
@@ -57,13 +66,23 @@ export const CHANNEL_DEFINITIONS: readonly ChannelDefinition[] = [
     topic: "Live PokeVerse server status.",
     readOnly: true,
     required: POST,
+    group: "main",
   },
   {
     purpose: "botCommands",
     name: "bot-commands",
-    topic: "Use /trainer, /pokemon and /server here.",
+    topic: "Use /trainer, /pokemon, /server and /link here.",
     readOnly: false,
     required: ["ViewChannel", "SendMessages", "EmbedLinks"],
+    group: "main",
+  },
+  {
+    purpose: "playerActivity",
+    name: "player-activity",
+    topic: "PRIVATE staff log of game logins and logouts. Contains personal data; never share it.",
+    readOnly: true,
+    required: POST,
+    group: "admin",
   },
 ];
 
@@ -83,4 +102,9 @@ export const REQUIRED_GUILD_PERMISSIONS: PermissionName[] = [
   "AttachFiles",
   "ReadMessageHistory",
   "ManageChannels",
+  "ManageRoles",
+  "ManageNicknames",
 ];
+
+/** Guild permissions only needed for account linking (roles and nicknames). */
+export const LINKING_GUILD_PERMISSIONS: PermissionName[] = ["ManageRoles", "ManageNicknames"];

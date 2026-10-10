@@ -54,6 +54,8 @@ export interface ConnectedInfo {
   bootId: string;
   serverName: string;
   queued: number;
+  /** Optional protocol features the server announced (empty for older servers). */
+  features: string[];
   /** True when the boot id differs from the previous connection (game restarted). */
   restarted: boolean;
   previousBootId: string | undefined;
@@ -94,6 +96,7 @@ export class BridgeClient extends EventEmitter<BridgeClientEvents> {
   private currentBootId: string | undefined;
   private lastBootId: string | undefined;
   private currentServerName: string | undefined;
+  private currentFeatures = new Set<string>();
   private authFailed = false;
 
   private readonly minDelay: number;
@@ -122,6 +125,11 @@ export class BridgeClient extends EventEmitter<BridgeClientEvents> {
 
   get serverName(): string | undefined {
     return this.currentServerName;
+  }
+
+  /** Features of the connected server; empty while disconnected. */
+  hasFeature(feature: string): boolean {
+    return this.state === "connected" && this.currentFeatures.has(feature);
   }
 
   /** Last boot id seen, even while disconnected. */
@@ -287,12 +295,14 @@ export class BridgeClient extends EventEmitter<BridgeClientEvents> {
     this.currentBootId = welcome.data.bootId;
     this.lastBootId = welcome.data.bootId;
     this.currentServerName = welcome.data.serverName;
+    this.currentFeatures = new Set(welcome.data.features ?? []);
     this.options.metrics.increment("bridge.connections");
     this.pingTimer = setInterval(() => this.heartbeat(), this.pingIntervalMs);
     const info: ConnectedInfo = {
       bootId: welcome.data.bootId,
       serverName: welcome.data.serverName,
       queued: welcome.data.queued,
+      features: [...this.currentFeatures],
       restarted: previousBootId !== undefined && previousBootId !== welcome.data.bootId,
       previousBootId,
     };

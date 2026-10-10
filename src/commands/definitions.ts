@@ -16,7 +16,33 @@ const CATCH_MODE_LABELS: Record<(typeof CATCH_MODES)[number], string> = {
   off: "Off",
 };
 
-export function buildCommandDefinitions(): RESTPostAPIChatInputApplicationCommandsJSONBody[] {
+export interface CommandDefinitionOptions {
+  linking: boolean;
+}
+
+interface Definition {
+  toJSON(): RESTPostAPIChatInputApplicationCommandsJSONBody;
+}
+
+function linkingCommands(): Definition[] {
+  const guildOnly = (builder: SlashCommandBuilder) => builder.setContexts(InteractionContextType.Guild);
+  return [
+    guildOnly(new SlashCommandBuilder().setName("link").setDescription("Link your PokeVerse account (get a code in game with !discord link)"))
+      .addStringOption((option) =>
+        option.setName("code").setDescription("One-time code shown in the game, e.g. ABCD-1234").setRequired(true).setMinLength(8).setMaxLength(16),
+      ),
+    guildOnly(new SlashCommandBuilder().setName("unlink").setDescription("Unlink your PokeVerse account (asks for confirmation)")),
+    guildOnly(new SlashCommandBuilder().setName("account").setDescription("Show your linked PokeVerse account (only you can see it)")),
+    guildOnly(new SlashCommandBuilder().setName("characters").setDescription("List the characters on your linked account")),
+    guildOnly(new SlashCommandBuilder().setName("main").setDescription("Choose your main character (used as your nickname)"))
+      .addStringOption((option) =>
+        option.setName("character").setDescription("One of your characters").setRequired(true).setMaxLength(30).setAutocomplete(true),
+      ),
+    guildOnly(new SlashCommandBuilder().setName("sync").setDescription("Update your roles and nickname from your linked account")),
+  ];
+}
+
+export function buildCommandDefinitions(options: CommandDefinitionOptions = { linking: true }): RESTPostAPIChatInputApplicationCommandsJSONBody[] {
   const trainer = new SlashCommandBuilder()
     .setName("trainer")
     .setDescription("Show a PokeVerse trainer's public profile")
@@ -86,6 +112,20 @@ export function buildCommandDefinitions(): RESTPostAPIChatInputApplicationComman
         .addStringOption((option) => option.setName("text").setDescription("Announcement text").setRequired(true).setMaxLength(2000))
         .addStringOption((option) => option.setName("title").setDescription("Optional title").setMaxLength(100)),
     );
+  if (options.linking) {
+    admin.addSubcommand((sub) =>
+      sub
+        .setName("unlink")
+        .setDescription("Remove a member's account link (recovery for a lost Discord account)")
+        .addStringOption((option) =>
+          option.setName("user_id").setDescription("Discord user ID of the linked account").setRequired(true).setMinLength(17).setMaxLength(20),
+        ),
+    );
+  }
 
-  return [trainer.toJSON(), pokemon.toJSON(), server.toJSON(), admin.toJSON()];
+  const commands: Definition[] = [trainer, pokemon, server, admin];
+  if (options.linking) {
+    commands.push(...linkingCommands());
+  }
+  return commands.map((command) => command.toJSON());
 }

@@ -4,7 +4,7 @@ import type { ZodError } from "zod";
 import type { CatchMode } from "../utils/stateStore.js";
 import type { LogFormat, LogLevel } from "../utils/logger.js";
 import { readEnvFile } from "./envFile.js";
-import { envSchema, PROFILES, SPAWN_SOURCES, type Profile } from "./schema.js";
+import { envSchema, PROFILES, SPAWN_SOURCES, type ACTIVITY_IP_MODES, type Profile } from "./schema.js";
 
 export interface BotConfig {
   profile: Profile;
@@ -48,6 +48,25 @@ export interface BotConfig {
   announcements: {
     broadcasts: boolean;
     restartWarnings: boolean;
+  };
+  activity: {
+    enabled: boolean;
+    /** Roles and users allowed to see #player-activity (falls back to the admin lists). */
+    viewerRoleIds: string[];
+    viewerUserIds: string[];
+    ipMode: (typeof ACTIVITY_IP_MODES)[number];
+    retentionDays: number;
+    file: string;
+    geoipDatabase: string | undefined;
+  };
+  linking: {
+    enabled: boolean;
+    verifiedRoleName: string;
+    premiumRoleEnabled: boolean;
+    premiumRoleName: string;
+    nicknameSync: boolean;
+    resyncMinutes: number;
+    membersIntent: boolean;
   };
   status: { refreshSeconds: number };
   autoSetup: boolean;
@@ -210,6 +229,28 @@ export function loadConfig(options: LoadOptions): BotConfig {
       broadcasts: raw.ANNOUNCE_BROADCASTS,
       restartWarnings: raw.ANNOUNCE_RESTART_WARNINGS,
     },
+    activity: {
+      enabled: raw.ACTIVITY_LOG_ENABLED,
+      viewerRoleIds: raw.ACTIVITY_LOG_VIEWER_ROLE_IDS.length > 0 || raw.ACTIVITY_LOG_VIEWER_USER_IDS.length > 0
+        ? raw.ACTIVITY_LOG_VIEWER_ROLE_IDS
+        : raw.DISCORD_ADMIN_ROLE_IDS,
+      viewerUserIds: raw.ACTIVITY_LOG_VIEWER_ROLE_IDS.length > 0 || raw.ACTIVITY_LOG_VIEWER_USER_IDS.length > 0
+        ? raw.ACTIVITY_LOG_VIEWER_USER_IDS
+        : raw.DISCORD_ADMIN_USER_IDS,
+      ipMode: raw.ACTIVITY_LOG_IP,
+      retentionDays: raw.ACTIVITY_RETENTION_DAYS,
+      file: fromConfigDir(raw.ACTIVITY_FILE ?? `data/activity.${profile}.json`),
+      geoipDatabase: raw.GEOIP_DATABASE ? fromConfigDir(raw.GEOIP_DATABASE) : undefined,
+    },
+    linking: {
+      enabled: raw.LINKING_ENABLED,
+      verifiedRoleName: raw.VERIFIED_ROLE_NAME,
+      premiumRoleEnabled: raw.PREMIUM_ROLE_ENABLED,
+      premiumRoleName: raw.PREMIUM_ROLE_NAME,
+      nicknameSync: raw.NICKNAME_SYNC,
+      resyncMinutes: raw.LINK_RESYNC_MINUTES,
+      membersIntent: raw.DISCORD_MEMBERS_INTENT,
+    },
     status: { refreshSeconds: raw.STATUS_REFRESH_SECONDS },
     autoSetup,
     artworkDir: raw.POKEMON_ARTWORK_DIR ? fromConfigDir(raw.POKEMON_ARTWORK_DIR) : undefined,
@@ -237,6 +278,12 @@ export function describeConfig(config: BotConfig): Record<string, unknown> {
       legendary: config.spawns.legendaryEnabled,
       location: config.spawns.locationMode,
     },
+    activityLog: config.activity.enabled
+      ? { ip: config.activity.ipMode, retentionDays: config.activity.retentionDays, geoip: config.activity.geoipDatabase !== undefined }
+      : false,
+    linking: config.linking.enabled
+      ? { roles: [config.linking.verifiedRoleName, ...(config.linking.premiumRoleEnabled ? [config.linking.premiumRoleName] : [])], nicknameSync: config.linking.nicknameSync }
+      : false,
     autoSetup: config.autoSetup,
     artworkDir: config.artworkDir ?? null,
     stateFile: config.stateFile,

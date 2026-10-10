@@ -14,7 +14,11 @@ export const welcomeSchema = z.object({
   bootId: z.string(),
   serverName: z.string(),
   queued: z.number(),
+  /** Optional protocol parts the server has switched on; absent on servers built before them. */
+  features: z.array(z.string()).optional(),
 });
+
+export const FEATURES = { playerSessions: "playerSessions", accountLinking: "accountLinking" } as const;
 export const errorSchema = z.object({ type: z.literal("error"), code: z.string() });
 
 const position = z.object({ x: z.number(), y: z.number(), z: z.number() });
@@ -77,6 +81,53 @@ export const serverStateEventSchema = z.object({
   players: z.number().optional(),
 });
 
+/** Admin-only: contains the account id and (optionally) the IP address. */
+export const playerLoginEventSchema = z.object({
+  kind: z.literal("player_login"),
+  scope: z.literal("admin"),
+  sessionId: z.string().min(1),
+  character: z.string(),
+  level: z.number(),
+  accountId: z.number(),
+  loginTime: z.number(),
+  ip: z.string().optional(),
+  clientOs: z.string().optional(),
+  clientVersion: z.number().optional(),
+  playersOnline: z.number().optional(),
+});
+
+export const playerLogoutEventSchema = z.object({
+  kind: z.literal("player_logout"),
+  scope: z.literal("admin"),
+  sessionId: z.string().min(1),
+  character: z.string(),
+  level: z.number(),
+  accountId: z.number(),
+  loginTime: z.number(),
+  logoutTime: z.number(),
+  duration: z.number(),
+  reason: z.string().optional(),
+  playersOnline: z.number().optional(),
+});
+
+const discordUserId = z.string().regex(/^\d{17,20}$/);
+
+export const accountLinkEventSchema = z.object({
+  kind: z.literal("account_link"),
+  scope: z.literal("account"),
+  action: z.string(),
+  source: z.string().optional(),
+  discordUserId,
+});
+
+export const accountCharactersEventSchema = z.object({
+  kind: z.literal("account_characters"),
+  scope: z.literal("account"),
+  discordUserId,
+  change: z.string(),
+  character: z.string(),
+});
+
 export const gameEventSchema = z.discriminatedUnion("kind", [
   chatEventSchema,
   catchEventSchema,
@@ -84,6 +135,10 @@ export const gameEventSchema = z.discriminatedUnion("kind", [
   broadcastEventSchema,
   restartWarningEventSchema,
   serverStateEventSchema,
+  playerLoginEventSchema,
+  playerLogoutEventSchema,
+  accountLinkEventSchema,
+  accountCharactersEventSchema,
 ]);
 
 export const eventEnvelopeSchema = z.object({
@@ -107,6 +162,10 @@ export type SpawnEvent = z.infer<typeof spawnEventSchema>;
 export type BroadcastEvent = z.infer<typeof broadcastEventSchema>;
 export type RestartWarningEvent = z.infer<typeof restartWarningEventSchema>;
 export type ServerStateEvent = z.infer<typeof serverStateEventSchema>;
+export type PlayerLoginEvent = z.infer<typeof playerLoginEventSchema>;
+export type PlayerLogoutEvent = z.infer<typeof playerLogoutEventSchema>;
+export type AccountLinkEvent = z.infer<typeof accountLinkEventSchema>;
+export type AccountCharactersEvent = z.infer<typeof accountCharactersEventSchema>;
 export type GameEvent = z.infer<typeof gameEventSchema>;
 
 export interface GameEventEnvelope<E extends GameEvent = GameEvent> {
@@ -191,6 +250,52 @@ export const bridgeConfigResultSchema = z.object({
   chatAuthorMaxLength: z.number(),
   legendary: z.array(z.string()),
 });
+
+// Account linking (results never contain account ids, account names or IPs).
+
+export const linkSummarySchema = z.object({
+  linked: z.literal(true),
+  discordUserId,
+  linkedAt: z.number(),
+  characterCount: z.number(),
+  main: z.object({ name: z.string(), level: z.number(), vocation: z.string().nullish() }).optional(),
+  mainChanged: z.boolean(),
+  premium: z.boolean(),
+  premiumUnlimited: z.boolean(),
+  premiumDays: z.number().optional(),
+});
+
+const notLinked = z.object({ linked: z.literal(false) });
+
+export const linkAccountResultSchema = z.union([notLinked, linkSummarySchema]);
+
+export const linkCharactersResultSchema = z.union([
+  notLinked,
+  z.object({
+    linked: z.literal(true),
+    characters: z.array(
+      z.object({ name: z.string(), level: z.number(), vocation: z.string().nullish(), main: z.boolean(), online: z.boolean() }),
+    ),
+  }),
+]);
+
+export const unlinkResultSchema = z.object({ unlinked: z.boolean() });
+
+export const linkListResultSchema = z.object({
+  links: z.array(linkSummarySchema),
+  nextOffset: z.number().optional(),
+});
+
+export const adminSessionsResultSchema = z.object({
+  sessions: z.array(z.object({ sessionId: z.string(), character: z.string(), level: z.number() })),
+  playersOnline: z.number(),
+});
+
+export type LinkSummary = z.infer<typeof linkSummarySchema>;
+export type LinkAccountResult = z.infer<typeof linkAccountResultSchema>;
+export type LinkCharactersResult = z.infer<typeof linkCharactersResultSchema>;
+export type LinkListResult = z.infer<typeof linkListResultSchema>;
+export type AdminSessionsResult = z.infer<typeof adminSessionsResultSchema>;
 
 export type TrainerResult = z.infer<typeof trainerResultSchema>;
 export type PokemonResult = z.infer<typeof pokemonResultSchema>;

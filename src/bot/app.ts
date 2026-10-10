@@ -19,6 +19,8 @@ export class StartupError extends Error {
 }
 
 export const GATEWAY_INTENTS = [GatewayIntentBits.Guilds, GatewayIntentBits.GuildMessages, GatewayIntentBits.MessageContent];
+/** Privileged; only requested with DISCORD_MEMBERS_INTENT=true (instant role restore on rejoin). */
+export const MEMBERS_INTENT = GatewayIntentBits.GuildMembers;
 /** Channel setup only needs guild data, so it works before Message Content is enabled. */
 export const SETUP_GATEWAY_INTENTS = [GatewayIntentBits.Guilds];
 
@@ -26,8 +28,11 @@ export const SETUP_GATEWAY_INTENTS = [GatewayIntentBits.Guilds];
 export function explainLoginError(error: unknown, config: BotConfig): StartupError {
   const message = (error as Error)?.message ?? String(error);
   if (/disallowed intents/i.test(message)) {
-    return new StartupError("Discord refused the Message Content intent.", [
+    return new StartupError("Discord refused a privileged intent.", [
       "Developer Portal > your application > Bot > Privileged Gateway Intents: enable MESSAGE CONTENT INTENT and save.",
+      ...(config.linking.membersIntent
+        ? ["DISCORD_MEMBERS_INTENT=true also needs SERVER MEMBERS INTENT there (or set DISCORD_MEMBERS_INTENT=false)."]
+        : []),
     ]);
   }
   if (/invalid token|TokenInvalid|401/i.test(message)) {
@@ -51,7 +56,10 @@ export class BotApp {
     private readonly options: { setupOnly?: boolean } = {},
   ) {
     this.store = new StateStore(config.stateFile, config.profile);
-    this.client = new Client({ intents: options.setupOnly ? SETUP_GATEWAY_INTENTS : GATEWAY_INTENTS, allowedMentions: { parse: [] } });
+    const intents = options.setupOnly
+      ? SETUP_GATEWAY_INTENTS
+      : [...GATEWAY_INTENTS, ...(config.linking.enabled && config.linking.membersIntent ? [MEMBERS_INTENT] : [])];
+    this.client = new Client({ intents, allowedMentions: { parse: [] } });
     this.integration = new GameIntegration({
       config,
       store: this.store,
@@ -98,7 +106,7 @@ export class BotApp {
     this.guild = new DiscordGuildPort(guild);
     logger.info("Using guild", { guild: guild.name, id: guild.id });
 
-    await guild.commands.set(buildCommandDefinitions());
+    await guild.commands.set(buildCommandDefinitions({ linking: config.linking.enabled }));
     logger.info("Slash commands registered for the guild");
 
     if (config.autoSetup || options.setupOnly) {
@@ -118,6 +126,11 @@ export class BotApp {
 
     client.on(Events.MessageCreate, createMessageHandler(this.integration.chat, logger.child({ component: "chat" })));
     client.on(Events.InteractionCreate, createInteractionHandler(this.integration.commands, logger.child({ component: "commands" })));
+    client.on(Events.GuildMemberAdd, (member) => {
+      if (member.guild.id === config.discord.guildId && !member.user.bot) {
+        this.integration.onMemberJoin(member.id);
+      }
+    });
     this.integration.start();
     logger.info("PokeVerse Discord bot is running");
   }

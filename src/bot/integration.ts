@@ -1,8 +1,13 @@
 import type { BotConfig } from "../config/load.js";
 import { CommandRouter } from "../commands/router.js";
 import { BridgeClient, type ConnectedInfo } from "../integrations/pokeverse/bridgeClient.js";
-import { createGameApi, type GameApi } from "../integrations/pokeverse/gameApi.js";
-import type { GameEventEnvelope } from "../integrations/pokeverse/protocol.js";
+import { createAdminApi, createGameApi, createLinkApi, type GameApi, type LinkApi } from "../integrations/pokeverse/gameApi.js";
+import { FEATURES, type GameEventEnvelope } from "../integrations/pokeverse/protocol.js";
+import { LinkCommands } from "../commands/linkCommands.js";
+import { ActivityLog } from "../services/activity/activityLog.js";
+import { ActivityStore } from "../services/activity/activityStore.js";
+import { GeoIp } from "../services/activity/geoip.js";
+import { LinkService, type NicknameMode } from "../services/linking/linkService.js";
 import { Announcer } from "../services/announcements/announcer.js";
 import { CatchAnnouncer } from "../services/catches/catchAnnouncer.js";
 import { ChatRelay } from "../services/chat/chatRelay.js";
@@ -27,6 +32,8 @@ export interface GameIntegrationOptions {
   /** Injected for tests; defaults to a BridgeClient built from the config. */
   bridge?: BridgeClient;
   now?: () => number;
+  /** Delay after a bridge connect before reconciling sessions and resyncing links. */
+  reconnectSyncDelayMs?: number;
 }
 
 /**
@@ -44,7 +51,11 @@ export class GameIntegration {
   readonly setup: ChannelSetup;
   readonly commands: CommandRouter;
   readonly artwork: ArtworkResolver;
+  readonly links: LinkApi;
+  readonly activity: ActivityLog | undefined;
+  readonly linking: LinkService | undefined;
   private readonly queues: Record<string, DeliveryQueue>;
+  private resyncTimer: NodeJS.Timeout | undefined;
 
   constructor(private readonly options: GameIntegrationOptions) {
     const { config, logger, metrics, store, channels } = options;
@@ -67,7 +78,10 @@ export class GameIntegration {
       catches: queue("catches"),
       spawns: queue("spawns"),
       announcements: queue("announcements"),
+      activity: queue("activity"),
+      linking: queue("linking", 1000),
     };
+    this.links = createLinkApi(this.bridge);
 
     this.chat = new ChatRelay({
       config: config.chat,
@@ -118,7 +132,45 @@ export class GameIntegration {
       metrics,
       now: options.now,
     });
-    this.setup = new ChannelSetup(store, logger.child({ component: "setup" }));
+    this.setup = new ChannelSetup(store, logger.child({ component: "setup" }), {
+      activity: { enabled: config.activity.enabled, viewerRoleIds: config.activity.viewerRoleIds, viewerUserIds: config.activity.viewerUserIds },
+      adminRoleIds: config.discord.adminRoleIds,
+      adminUserIds: config.discord.adminUserIds,
+      linking: {
+        enabled: config.linking.enabled,
+        roles: [
+          { key: "verified", name: config.linking.verifiedRoleName },
+          ...(config.linking.premiumRoleEnabled ? [{ key: "premium" as const, name: config.linking.premiumRoleName }] : []),
+        ],
+      },
+    });
+    this.activity = config.activity.enabled
+      ? new ActivityLog({
+          config: { ipMode: config.activity.ipMode, retentionDays: config.activity.retentionDays },
+          channels,
+          guild: options.guild,
+          policy: (botUserId) => this.setup.privacyPolicy(botUserId),
+          store: new ActivityStore({ file: config.activity.file, logger: logger.child({ component: "activity" }) }),
+          geo: GeoIp.open(config.activity.geoipDatabase, logger.child({ component: "geoip" })),
+          admin: createAdminApi(this.bridge),
+          sessionsAvailable: () => this.bridge.hasFeature(FEATURES.playerSessions),
+          queue: this.queues.activity!,
+          logger: logger.child({ component: "activity" }),
+          metrics,
+          now: options.now,
+          reconcileDelayMs: options.reconnectSyncDelayMs,
+        })
+      : undefined;
+    this.linking = config.linking.enabled
+      ? new LinkService({
+          config: config.linking,
+          links: this.links,
+          guild: options.guild,
+          store,
+          logger: logger.child({ component: "linking" }),
+          metrics,
+        })
+      : undefined;
     this.commands = new CommandRouter({
       config,
       game: this.game,
@@ -133,6 +185,24 @@ export class GameIntegration {
       queueSizes: () => this.queueSizes(),
       logger: logger.child({ component: "commands" }),
       metrics,
+      activity: this.activity,
+      linking: this.linking
+        ? {
+            service: this.linking,
+            api: this.links,
+            commands: new LinkCommands({
+              links: this.links,
+              service: this.linking,
+              roleNames: {
+                verified: config.linking.verifiedRoleName,
+                premium: config.linking.premiumRoleEnabled ? config.linking.premiumRoleName : undefined,
+              },
+              logger: logger.child({ component: "linking" }),
+              metrics,
+              now: options.now,
+            }),
+          }
+        : undefined,
     });
 
     this.bridge.on("connected", (info) => this.onConnected(info));
@@ -143,10 +213,15 @@ export class GameIntegration {
   start(): void {
     this.bridge.start();
     this.status.start();
+    this.activity?.start();
+    this.linking?.start();
   }
 
   async stop(): Promise<void> {
     this.status.stop();
+    clearTimeout(this.resyncTimer);
+    this.activity?.stop();
+    this.linking?.stop();
     this.bridge.stop();
     await Promise.race([
       Promise.all(Object.values(this.queues).map((queue) => queue.idle())),
@@ -185,6 +260,18 @@ export class GameIntegration {
         case "server_state":
           this.status.onServerState({ ...envelope, event });
           break;
+        case "player_login":
+          this.activity?.handleLogin({ ...envelope, event });
+          break;
+        case "player_logout":
+          this.activity?.handleLogout({ ...envelope, event });
+          break;
+        case "account_link":
+          this.syncMember(event.discordUserId, "if_changed");
+          break;
+        case "account_characters":
+          this.syncMember(event.discordUserId, "if_changed");
+          break;
       }
     } catch (error) {
       this.options.metrics.increment("events.errors");
@@ -192,9 +279,34 @@ export class GameIntegration {
     }
   }
 
+  /** Re-reads a member's link from the game and syncs roles and nickname (queued, one at a time). */
+  syncMember(discordUserId: string, mode: NicknameMode): void {
+    const linking = this.linking;
+    if (!linking) {
+      return;
+    }
+    this.queues.linking!.enqueue("link sync", async () => {
+      if (linking.available) {
+        await linking.refresh(discordUserId, mode);
+      }
+    });
+  }
+
+  /** A member joined (or rejoined) the guild: restore their roles and nickname. */
+  onMemberJoin(discordUserId: string): void {
+    this.syncMember(discordUserId, "always");
+  }
+
   private onConnected(info: ConnectedInfo): void {
     this.status.onConnected(info).catch((error: unknown) => {
       this.options.logger.warn("Status update after connect failed", { error });
     });
+    this.activity?.onConnected(info);
+    const linking = this.linking;
+    if (linking) {
+      clearTimeout(this.resyncTimer);
+      this.resyncTimer = setTimeout(() => void linking.resyncAll(), this.options.reconnectSyncDelayMs ?? 5000);
+      this.resyncTimer.unref();
+    }
   }
 }

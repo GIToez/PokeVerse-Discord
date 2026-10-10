@@ -8,6 +8,8 @@ export const SPAWN_LOCATION_MODES = ["none", "town", "coordinates"] as const;
 /** A shiny legendary is announced exactly once, in one of these channels. */
 export const SHINY_LEGENDARY_ROUTES = ["legendary", "shiny"] as const;
 export const SPAWN_SOURCES = ["spawn", "script", "fishing", "headbutt"] as const;
+/** How the private #player-activity channel shows IP addresses. */
+export const ACTIVITY_IP_MODES = ["full", "masked", "hidden"] as const;
 
 const snowflake = z.string().regex(/^\d{17,20}$/, "must be a Discord ID (17-20 digits)");
 
@@ -106,6 +108,22 @@ export const envSchema = z.object({
 
   ANNOUNCE_BROADCASTS: bool(true),
   ANNOUNCE_RESTART_WARNINGS: bool(true),
+
+  ACTIVITY_LOG_ENABLED: bool(true),
+  ACTIVITY_LOG_VIEWER_ROLE_IDS: snowflakeList,
+  ACTIVITY_LOG_VIEWER_USER_IDS: snowflakeList,
+  ACTIVITY_LOG_IP: z.enum(ACTIVITY_IP_MODES).default("full"),
+  ACTIVITY_RETENTION_DAYS: int(30, 1, 3650),
+  ACTIVITY_FILE: optionalString,
+  GEOIP_DATABASE: optionalString,
+
+  LINKING_ENABLED: bool(true),
+  VERIFIED_ROLE_NAME: z.string().trim().min(1).max(100).default("Verified Trainer"),
+  PREMIUM_ROLE_ENABLED: bool(true),
+  PREMIUM_ROLE_NAME: z.string().trim().min(1).max(100).default("Ace Trainer"),
+  NICKNAME_SYNC: bool(true),
+  LINK_RESYNC_MINUTES: int(15, 0, 1440),
+  DISCORD_MEMBERS_INTENT: bool(false),
 
   STATUS_REFRESH_SECONDS: int(60, 15, 3600),
   AUTO_SETUP: z.string().optional(),

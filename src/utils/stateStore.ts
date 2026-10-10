@@ -10,6 +10,7 @@ export const CHANNEL_PURPOSES = [
   "announcements",
   "serverStatus",
   "botCommands",
+  "playerActivity",
 ] as const;
 
 export type ChannelPurpose = (typeof CHANNEL_PURPOSES)[number];
@@ -27,6 +28,14 @@ const stateSchema = z.object({
   catchMode: z.enum(CATCH_MODES).optional(),
   lastBootId: z.string().optional(),
   lastRestartAt: z.number().optional(),
+  adminCategoryId: z.string().optional(),
+  /** Linking roles created or adopted by setup. */
+  roles: z.object({ verified: z.string().optional(), premium: z.string().optional() }).default({}),
+  /**
+   * Members the bot gave a linking role or nickname, so they can be cleaned up after an
+   * unlink without the privileged members intent. Value: the nickname the bot set, or "".
+   */
+  linkedMembers: z.record(z.string()).default({}),
 });
 
 export type BotState = z.infer<typeof stateSchema>;
@@ -47,7 +56,7 @@ export class StateStore {
 
   private load(): BotState {
     if (!existsSync(this.file)) {
-      return { version: 1, profile: this.profile, channels: {} };
+      return { version: 1, profile: this.profile, channels: {}, roles: {}, linkedMembers: {} };
     }
     const parsed = stateSchema.parse(JSON.parse(readFileSync(this.file, "utf8")));
     if (parsed.profile !== this.profile) {
