@@ -79,6 +79,14 @@ The player never types their game password into Discord, and the bot never asks 
 Syncs are idempotent (they only call Discord for real differences), queued one at a time
 (Discord rate limits are handled by discord.js), and a failed sync never removes the link.
 
+## Staff log
+
+With the activity log on, every link and unlink is also posted to the private
+`#player-activity` channel: the Discord user, the main character, number of characters,
+premium, how the unlink happened (`/unlink`, `!discord unlink` or staff `/pokeverse unlink`
+with the admin's name) and the roles given or removed, plus any Discord sync problems. These
+posts follow the same privacy check and retention as login posts ([PRIVACY.md](PRIVACY.md)).
+
 ## Recovery
 
 | Situation | What to do |

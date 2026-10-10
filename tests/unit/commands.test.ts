@@ -15,7 +15,7 @@ import { silentLogger } from "../../src/utils/logger.js";
 import { Metrics } from "../../src/utils/metrics.js";
 import { LinkCommands } from "../../src/commands/linkCommands.js";
 import { isPrivateCommand } from "../../src/commands/router.js";
-import { LinkService } from "../../src/services/linking/linkService.js";
+import { LinkService, type LinkChange } from "../../src/services/linking/linkService.js";
 import { DEV_GUILD, FakeChannels, FakeGame, FakeGuild, FakeLinkApi, LINKED_USER, makeConfig, makeStore, tempDir } from "../helpers/fakes.js";
 
 const ADMIN = "700000000000000001";
@@ -30,6 +30,7 @@ function setup(overrides: Record<string, string> = {}, artworkDir?: string, with
   const guild = new FakeGuild();
   const queue = new DeliveryQueue({ name: "a", maxSize: 10, maxAttempts: 1, retryDelayMs: 1, logger: silentLogger, metrics });
   const links = new FakeLinkApi();
+  const linkChanges: LinkChange[] = [];
   const service = new LinkService({
     config: { verifiedRoleName: "Verified Trainer", premiumRoleEnabled: true, premiumRoleName: "Ace Trainer", nicknameSync: true, resyncMinutes: 0 },
     links,
@@ -37,6 +38,7 @@ function setup(overrides: Record<string, string> = {}, artworkDir?: string, with
     store,
     logger: silentLogger,
     metrics,
+    onChange: (change) => linkChanges.push(change),
   });
   const linking = withLinking
     ? {
@@ -70,7 +72,7 @@ function setup(overrides: Record<string, string> = {}, artworkDir?: string, with
       user: { id: MEMBER, displayName: "Member", roleIds: [], manageGuild: false },
       ...extra,
     });
-  return { config, store, game, channels, guild, router, run, metrics, links };
+  return { config, store, game, channels, guild, router, run, metrics, links, linkChanges };
 }
 
 const adminUser = { id: ADMIN, displayName: "Admin", roleIds: [], manageGuild: true };
@@ -268,7 +270,7 @@ describe("account linking commands", () => {
   });
 
   it("lets admins remove a link for recovery", async () => {
-    const { run, links } = setup({}, undefined, true);
+    const { run, links, linkChanges } = setup({}, undefined, true);
     links.link(LINKED_USER);
     expect((await run("pokeverse", { user_id: LINKED_USER }, { subcommand: "unlink" })).message.content).toMatch(/only for PokeVerse admins|not allowed|permission/i);
     expect(links.accounts.has(LINKED_USER)).toBe(true);
@@ -278,6 +280,7 @@ describe("account linking commands", () => {
     expect(links.accounts.has(LINKED_USER)).toBe(false);
     const again = await run("pokeverse", { user_id: LINKED_USER }, { subcommand: "unlink", user: adminUser });
     expect(again.message.embeds![0]!.description).toMatch(/has no linked game account/);
+    expect(linkChanges).toMatchObject([{ action: "unlinked", discordUserId: LINKED_USER, source: "admin", by: adminUser.id }]);
     expect((await setup().run("pokeverse", { user_id: LINKED_USER }, { subcommand: "unlink", user: adminUser })).message.content).toMatch(/disabled/);
   });
 

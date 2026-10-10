@@ -19,7 +19,17 @@ export interface LinkServiceOptions {
   store: StateStore;
   logger: Logger;
   metrics: Metrics;
+  /** Told about every link and unlink the bot sees (staff activity log). */
+  onChange?: (change: LinkChange) => void;
 }
+
+/**
+ * A link created or removed. `source`: `discord` (the player's own /link or /unlink),
+ * `game` (`!discord unlink` in game) or `admin` (/pokeverse unlink by `by`).
+ */
+export type LinkChange =
+  | { action: "linked"; discordUserId: string; source: "discord"; link: LinkSummary; sync: SyncResult }
+  | { action: "unlinked"; discordUserId: string; source: "discord" | "game" | "admin"; by?: string; sync?: SyncResult };
 
 /**
  * When to write the nickname:
@@ -42,6 +52,13 @@ const REASON = "PokeVerse account link";
 /** Discord nickname limit. */
 const MAX_NICKNAME = 32;
 const PAGE_SIZE = 200;
+
+export function premiumText(link: LinkSummary): string {
+  if (link.premiumUnlimited) {
+    return "Yes (unlimited)";
+  }
+  return link.premium ? `Yes (${link.premiumDays ?? "?"} days left)` : "No";
+}
 
 function isMissingPermissions(error: unknown): boolean {
   return error instanceof DiscordAPIError && error.code === RESTJSONErrorCodes.MissingPermissions;
@@ -73,6 +90,15 @@ export class LinkService {
 
   stop(): void {
     clearInterval(this.timer);
+  }
+
+  /** Reports a link change; a failing listener never affects the link or the reply. */
+  notify(change: LinkChange): void {
+    try {
+      this.options.onChange?.(change);
+    } catch (error) {
+      this.options.logger.warn("Link change listener failed", { action: change.action, error });
+    }
   }
 
   roleIds(): { verified: string | undefined; premium: string | undefined } {

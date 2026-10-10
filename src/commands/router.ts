@@ -299,6 +299,7 @@ export class CommandRouter {
     if (!result.unlinked) {
       return reply(`<@${target}> has no linked game account.`, true, COLORS.neutral);
     }
+    linking.service.notify({ action: "unlinked", discordUserId: target, source: "admin", by: input.user.id, sync });
     const note = sync.problems.length > 0 ? `\nNote: ${sync.problems.join(" ")}` : "";
     return reply(`The game account linked to <@${target}> is unlinked. The player can link again with \`!discord link\`.${note}`, true, COLORS.success);
   }

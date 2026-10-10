@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { LinkCommands } from "../../src/commands/linkCommands.js";
 import type { CommandInput } from "../../src/commands/router.js";
-import { LinkService } from "../../src/services/linking/linkService.js";
+import { LinkService, type LinkChange } from "../../src/services/linking/linkService.js";
 import { silentLogger } from "../../src/utils/logger.js";
 import { Metrics } from "../../src/utils/metrics.js";
 import {
@@ -27,6 +27,7 @@ function setup(config: Partial<ConstructorParameters<typeof LinkService>[0]["con
   store.update((state) => {
     state.roles = { verified: verified.id, premium: premium.id };
   });
+  const changes: LinkChange[] = [];
   const service = new LinkService({
     config: { verifiedRoleName: "Verified Trainer", premiumRoleEnabled: true, premiumRoleName: "Ace Trainer", nicknameSync: true, resyncMinutes: 0, ...config },
     links,
@@ -34,6 +35,7 @@ function setup(config: Partial<ConstructorParameters<typeof LinkService>[0]["con
     store,
     logger: silentLogger,
     metrics,
+    onChange: (change) => changes.push(change),
   });
   let now = 1_700_000_000_000;
   const commands = new LinkCommands({
@@ -56,7 +58,7 @@ function setup(config: Partial<ConstructorParameters<typeof LinkService>[0]["con
     commands.handleComponent({ customId, guildId: DEV_GUILD, user: { id: userId, displayName: "Member", roleIds: [], manageGuild: false } });
   const text = (response: Awaited<ReturnType<typeof run>>) => response.message.content ?? response.message.embeds?.[0]?.description ?? "";
   return {
-    guild, store, links, metrics, service, commands, member, run, press, text, verified, premium, unrelated,
+    guild, store, links, metrics, service, commands, member, run, press, text, verified, premium, unrelated, changes,
     advance: (ms: number) => {
       now += ms;
     },
@@ -222,7 +224,7 @@ describe("link service", () => {
 
 describe("/link", () => {
   it("links with a valid code, gives the role and sets the nickname", async () => {
-    const { run, text, links, member, verified } = setup();
+    const { run, text, links, member, verified, changes } = setup();
     links.addCode("ABCD-2345");
     const response = await run("link", { code: " abcd 2345 " });
     expect(response.ephemeral).toBe(true);
@@ -232,10 +234,11 @@ describe("/link", () => {
     expect(member.roleIds).toContain(verified.id);
     expect(member.nickname).toBe("Red Trainer");
     expect(links.accounts.get(LINKED_USER)?.link.discordUserId).toBe(LINKED_USER);
+    expect(changes).toMatchObject([{ action: "linked", discordUserId: LINKED_USER, source: "discord", link: { main: { name: "Red Trainer" } }, sync: { added: ["Verified Trainer"] } }]);
   });
 
   it("maps game errors to clear messages and never calls the game for malformed codes", async () => {
-    const { run, text, links } = setup();
+    const { run, text, links, changes } = setup();
     expect(text(await run("link", { code: "x" }))).toMatch(/8-character code/);
     expect(text(await run("link", { code: "ABCD;1234" }))).toMatch(/8-character code/);
     expect(links.calls).toEqual([]);
@@ -249,6 +252,7 @@ describe("/link", () => {
       links.failNext.push(code);
       expect(text(await run("link", { code: "ABCD-2345" }, OTHER))).toMatch(pattern);
     }
+    expect(changes).toEqual([]);
   });
 
   it("refuses a second link and rate-limits attempts", async () => {
@@ -274,7 +278,7 @@ describe("/link", () => {
 
 describe("/unlink", () => {
   it("asks for confirmation with buttons only the owner can use", async () => {
-    const { run, press, text, links, member, verified } = setup();
+    const { run, press, text, links, member, verified, changes } = setup();
     links.link(LINKED_USER);
     await run("sync");
     const prompt = await run("unlink");
@@ -285,11 +289,22 @@ describe("/unlink", () => {
     expect(text(await press(buttons[0]!.customId, OTHER))).toMatch(/not for you/);
     expect(text(await press(buttons[1]!.customId))).toMatch(/Nothing was changed/);
     expect(links.accounts.has(LINKED_USER)).toBe(true);
+    expect(changes).toEqual([]);
 
     expect(text(await press(buttons[0]!.customId))).toMatch(/no longer linked/);
     expect(links.accounts.has(LINKED_USER)).toBe(false);
     expect(member.roleIds).not.toContain(verified.id);
     expect(member.nickname).toBeNull();
+    expect(changes).toMatchObject([{ action: "unlinked", discordUserId: LINKED_USER, source: "discord", sync: { removed: ["Verified Trainer"] } }]);
+  });
+
+  it("never lets a failing change listener break the reply", async () => {
+    const { run, text, links, service } = setup();
+    (service as unknown as { options: { onChange: () => void } }).options.onChange = () => {
+      throw new Error("listener broke");
+    };
+    links.addCode("ABCD-2345");
+    expect(text(await run("link", { code: "ABCD-2345" }))).toMatch(/now linked/);
   });
 
   it("expires the confirmation after 60 seconds", async () => {

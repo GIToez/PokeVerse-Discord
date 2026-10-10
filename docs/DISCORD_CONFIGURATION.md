@@ -97,7 +97,7 @@ PokeVerse Integration
   #server-status        one live status message          read-only
   #bot-commands         /trainer, /pokemon, /server      members can write
 Admin Logs                                               private (activity log enabled)
-  #player-activity      staff-only login/logout log      read-only, authorized viewers only
+  #player-activity      staff-only login/logout/link log read-only, authorized viewers only
 ```
 
 `Admin Logs` and `#player-activity` are created with `@everyone` denied View Channel, the bot

@@ -219,7 +219,7 @@ describe("player activity and account linking pipeline", () => {
   });
 
   it("syncs a member when the game reports a link change and when they rejoin", async () => {
-    const { server, integration, guild, store, links } = await phase2();
+    const { server, integration, guild, store, links, sink } = await phase2();
     const member = guild.addMember(LINKED_USER);
     links.set(LINKED_USER, linkSummary({ premium: true }));
     server.emit({ kind: "account_link", scope: "account", action: "linked", discordUserId: LINKED_USER });
@@ -242,6 +242,13 @@ describe("player activity and account linking pipeline", () => {
     server.emit({ kind: "account_link", scope: "account", action: "unlinked", source: "game", discordUserId: LINKED_USER });
     await waitFor(() => member.nickname === null, 3000, "nickname reset after unlink");
     expect(member.roleIds).toEqual([]);
+    await waitFor(() => sink.sent.length === 1, 3000, "unlink post");
+    const embed = sink.sent[0]!.message.embeds![0]!;
+    expect(embed.title).toBe("Account unlinked");
+    expect(embed.fields).toEqual(expect.arrayContaining([
+      { name: "How", value: "`!discord unlink` in the game", inline: true },
+      { name: "Roles", value: "Removed: Verified Trainer" },
+    ]));
   });
 
   it("resyncs all links after connecting, including members unlinked while the bot was away", async () => {

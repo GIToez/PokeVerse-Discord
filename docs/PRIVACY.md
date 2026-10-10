@@ -1,6 +1,6 @@
 # Privacy: player activity log
 
-The bot can post a staff-only log of logins and logouts to `#player-activity` in the private
+The bot can post a staff-only log of logins, logouts and account links to `#player-activity` in the private
 `Admin Logs` category. This page lists what is recorded, where, for how long, and how to turn
 each part off.
 
@@ -11,6 +11,13 @@ each part off.
 | Login | Character, level, account number (`#42`, the game's internal id, never the account name), time, IP address (see below), approximate location (with a GeoIP database), players online, client type and protocol, session id |
 | Logout | Character, level, time, session length, reason, players online, session id |
 | Session ended | Posted instead of a logout the bot never received: "the game server restarted" or "the character was no longer online" |
+| Account linked | Discord user (mention and id), time, main character and level, number of characters, premium, roles given, Discord sync problems |
+| Account unlinked | Discord user, time, how (`/unlink`, `!discord unlink` in game, or staff `/pokeverse unlink` and who ran it), roles removed, Discord sync problems |
+
+Link posts never contain an IP address, an account number or the account name: the game does
+not send them with links. An in-game unlink while the bot is offline is queued by the game and
+posted when the bot reconnects (lost if the game restarts first); the bot's next resync fixes the
+member's roles either way.
 
 Logout reasons are only the ones the game server actually knows: logged out, connection lost,
 timed out, kicked by staff (`/kick`, `/masskick`), died, server shutdown, server closed to
@@ -69,9 +76,9 @@ in the bot process; the address never leaves the machine.
 - The bot keeps a small record per session in `ACTIVITY_FILE` (default
   `data/activity.<profile>.json`, mode 600 on Linux): session id, server run id, character,
   level, login/logout times and the ids of the posted messages, so it can avoid duplicates,
-  close sessions after a restart and delete expired messages. **No IP address and no account
-  number** are stored. At most 20,000 sessions are kept; older ones are dropped and their
-  messages deleted.
+  close sessions after a restart and delete expired messages. For link posts it keeps only the
+  message id and the time. **No IP address and no account number** are stored. At most 20,000
+  sessions and 20,000 link posts are kept; older ones are dropped and their messages deleted.
 - Messages in a channel that was reassigned or deleted cannot be deleted by the bot; remove
   them by hand.
 - Discord's own copies, the game server's logs and database are outside the bot's control.

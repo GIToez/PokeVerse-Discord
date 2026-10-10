@@ -7,7 +7,7 @@ import { LinkCommands } from "../commands/linkCommands.js";
 import { ActivityLog } from "../services/activity/activityLog.js";
 import { ActivityStore } from "../services/activity/activityStore.js";
 import { GeoIp } from "../services/activity/geoip.js";
-import { LinkService, type NicknameMode } from "../services/linking/linkService.js";
+import { LinkService, type NicknameMode, type SyncResult } from "../services/linking/linkService.js";
 import { Announcer } from "../services/announcements/announcer.js";
 import { CatchAnnouncer } from "../services/catches/catchAnnouncer.js";
 import { ChatRelay } from "../services/chat/chatRelay.js";
@@ -169,6 +169,7 @@ export class GameIntegration {
           store,
           logger: logger.child({ component: "linking" }),
           metrics,
+          onChange: (change) => this.activity?.handleLinkChange(change),
         })
       : undefined;
     this.commands = new CommandRouter({
@@ -267,7 +268,7 @@ export class GameIntegration {
           this.activity?.handleLogout({ ...envelope, event });
           break;
         case "account_link":
-          this.syncMember(event.discordUserId, "if_changed");
+          this.syncMember(event.discordUserId, "if_changed", event.action === "unlinked" ? "game" : undefined);
           break;
         case "account_characters":
           this.syncMember(event.discordUserId, "if_changed");
@@ -280,14 +281,21 @@ export class GameIntegration {
   }
 
   /** Re-reads a member's link from the game and syncs roles and nickname (queued, one at a time). */
-  syncMember(discordUserId: string, mode: NicknameMode): void {
+  syncMember(discordUserId: string, mode: NicknameMode, unlinkedIn?: "game"): void {
     const linking = this.linking;
     if (!linking) {
       return;
     }
     this.queues.linking!.enqueue("link sync", async () => {
-      if (linking.available) {
-        await linking.refresh(discordUserId, mode);
+      let sync: SyncResult | undefined;
+      try {
+        if (linking.available) {
+          sync = await linking.refresh(discordUserId, mode);
+        }
+      } finally {
+        if (unlinkedIn) {
+          linking.notify({ action: "unlinked", discordUserId, source: unlinkedIn, sync });
+        }
       }
     });
   }

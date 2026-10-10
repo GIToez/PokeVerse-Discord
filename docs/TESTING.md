@@ -10,7 +10,7 @@ scripts/live-test.sh <game repo> <game server binary>    # against a real game s
 
 | Suite | Files | Tests | Runs against |
 | --- | --- | --- | --- |
-| Unit | `tests/unit/*.test.ts` | 146 | Fakes for Discord channels, the guild (roles, members, overwrites) and the game API |
+| Unit | `tests/unit/*.test.ts` | 152 | Fakes for Discord channels, the guild (roles, members, overwrites) and the game API |
 | Integration | `tests/integration/*.test.ts` | 22 | The real bridge client and `GameIntegration` against a fake bridge server speaking the protocol over real TCP |
 | Live | `tests/live/game.live.test.ts` | 16 | **A real PokeVerse game server** (`main` + Phase 2 patches), real MariaDB, real game clients |
 | Game-side | `scripts/discord-bridge-test.py` (game repo) | - | Real server and clients, protocol-level |
@@ -47,7 +47,8 @@ runs the game's own server test and then `scripts/live-test.sh`.
   `#player-activity` is visible to `@everyone` or an unlisted role), duplicate logins and
   logouts, logout reason only when sent, reconciliation after a game restart and after
   missed logouts, a bot disconnect not ending sessions, retention deleting records and
-  messages, store size limit, no IP or account id in the session file.
+  messages, store size limit, no IP or account id in the session file, link and unlink posts
+  (each source, roles, sync problems, privacy check, retention across a bot restart).
 - Account linking (`tests/unit/linking.test.ts`, `commands.test.ts`): `/link` code
   normalization and every game error code, `/unlink` buttons (confirm, cancel, other user,
   expiry), `/account` and `/characters` ephemeral, `/main` autocomplete and ownership,
@@ -80,9 +81,10 @@ game server.
 | GM broadcast | `/b` from a GM, posted exactly once |
 | Player activity | Real logins in the private channel: character, level, account reference, IP (loopback, "No location"), client "OTClient (Windows), protocol 312", session id, online count |
 | Link | Code from a real `!discord link`, redeemed with `/link`; Verified Trainer and Ace Trainer added, nickname set to "Live Linker" |
+| Link post | "Account linked" in `#player-activity` with the real main character, 2 characters, "Yes (5 days left)" and both roles given |
 | `/account`, `/characters`, `/main` | Real account data ("Yes (5 days left)" premium), switching the main to "Live Second" renames the member |
 | Logout | Real logout posted with reason "Logged out" |
-| In-game unlink | `!discord unlink confirm` removes both roles and the nickname |
+| In-game unlink | `!discord unlink confirm` removes both roles and the nickname; "Account unlinked" posted with how and the roles removed |
 | Reconnect | Bridge connection replaced, bot reconnects and keeps working, no false "Session ended" |
 | Restart warning | `/shutdown 10` and `/shutdown stop` |
 

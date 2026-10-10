@@ -12,6 +12,7 @@ import { discordTimestamp, formatDuration } from "../../utils/format.js";
 import type { Logger } from "../../utils/logger.js";
 import type { Metrics } from "../../utils/metrics.js";
 import { COLORS, plain } from "../embeds.js";
+import { premiumText, type LinkChange } from "../linking/linkService.js";
 import type { ActivityStore, SessionRecord } from "./activityStore.js";
 import type { GeoIp } from "./geoip.js";
 import { maskIp } from "./ip.js";
@@ -222,14 +223,25 @@ export class ActivityLog {
     this.post(record.sessionId, `close ${ended}`, { embeds: [embed] });
   }
 
-  private post(sessionId: string, label: string, message: { embeds: APIEmbed[] }): void {
+  /** Posts a Discord account link or unlink. */
+  handleLinkChange(change: LinkChange): void {
+    this.options.metrics.increment(`activity.${change.action}`);
+    this.post(undefined, change.action, { embeds: [this.linkEmbed(change)] });
+  }
+
+  /** `sessionId` undefined: the message belongs to no session and expires on its own. */
+  private post(sessionId: string | undefined, label: string, message: { embeds: APIEmbed[] }): void {
     this.options.queue.enqueue(`activity ${label}`, async () => {
       const sink = this.privateSink();
       if (!sink) {
         return;
       }
       const id = await sink.send(message);
-      this.options.store.addMessage(sessionId, id);
+      if (sessionId === undefined) {
+        this.options.store.addNotice(id, this.seconds());
+      } else {
+        this.options.store.addMessage(sessionId, id);
+      }
       this.options.metrics.increment("activity.posted");
     });
   }
@@ -305,6 +317,47 @@ export class ActivityLog {
     }
     fields.push({ name: "Session", value: event.sessionId, inline: true });
     return { title: "Logout", color: COLORS.neutral, fields, footer: { text: this.footer() } };
+  }
+
+  private linkEmbed(change: LinkChange): APIEmbed {
+    const fields: NonNullable<APIEmbed["fields"]> = [
+      { name: "Discord user", value: `<@${change.discordUserId}> (\`${change.discordUserId}\`)`, inline: true },
+      { name: "Time", value: discordTimestamp(this.seconds(), "f"), inline: true },
+    ];
+    if (change.action === "linked") {
+      const { link } = change;
+      fields.push(
+        { name: "Main character", value: link.main ? `${plain(link.main.name)} (level ${link.main.level})` : "None yet", inline: true },
+        { name: "Characters", value: String(link.characterCount), inline: true },
+        { name: "Premium", value: premiumText(link), inline: true },
+        { name: "How", value: "`/link` with a code from the game", inline: true },
+      );
+    } else {
+      const how = change.source === "game"
+        ? "`!discord unlink` in the game"
+        : change.source === "admin"
+          ? `Staff \`/pokeverse unlink\`${change.by ? ` by <@${change.by}>` : ""}`
+          : "`/unlink` in Discord";
+      fields.push({ name: "How", value: how, inline: true });
+    }
+    const sync = change.sync;
+    if (sync && (sync.added.length > 0 || sync.removed.length > 0)) {
+      fields.push({
+        name: "Roles",
+        value: [sync.added.length > 0 ? `Given: ${sync.added.join(", ")}` : "", sync.removed.length > 0 ? `Removed: ${sync.removed.join(", ")}` : ""]
+          .filter(Boolean)
+          .join("\n"),
+      });
+    }
+    if (sync && sync.problems.length > 0) {
+      fields.push({ name: "Discord sync problems", value: sync.problems.join("\n").slice(0, 1024) });
+    }
+    return {
+      title: change.action === "linked" ? "Account linked" : "Account unlinked",
+      color: change.action === "linked" ? COLORS.info : COLORS.warning,
+      fields,
+      footer: { text: this.footer() },
+    };
   }
 
   private footer(): string {

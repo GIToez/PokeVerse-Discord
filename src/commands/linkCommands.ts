@@ -3,7 +3,7 @@ import { BridgeRequestError, BridgeUnavailableError } from "../integrations/poke
 import type { LinkApi } from "../integrations/pokeverse/gameApi.js";
 import type { LinkSummary } from "../integrations/pokeverse/protocol.js";
 import { COLORS, plain } from "../services/embeds.js";
-import type { LinkService, SyncResult } from "../services/linking/linkService.js";
+import { premiumText, type LinkService, type SyncResult } from "../services/linking/linkService.js";
 import { discordTimestamp } from "../utils/format.js";
 import type { Logger } from "../utils/logger.js";
 import type { Metrics } from "../utils/metrics.js";
@@ -32,13 +32,6 @@ function reply(text: string, color?: number): CommandResponse {
   return color === undefined
     ? { ephemeral: true, message: { content: text } }
     : { ephemeral: true, message: { embeds: [{ description: text, color }] } };
-}
-
-function premiumText(link: LinkSummary): string {
-  if (link.premiumUnlimited) {
-    return "Yes (unlimited)";
-  }
-  return link.premium ? `Yes (${link.premiumDays ?? "?"} days left)` : "No";
 }
 
 /**
@@ -131,6 +124,7 @@ export class LinkCommands {
     this.options.metrics.increment("linking.unlinked");
     this.options.logger.info("Account unlinked from Discord", { user: owner });
     const sync = await this.options.service.sync(owner, undefined);
+    this.options.service.notify({ action: "unlinked", discordUserId: owner, source: "discord", sync });
     return reply(this.withProblems("Your Discord account is no longer linked. Your characters are not affected.", sync), COLORS.success);
   }
 
@@ -167,6 +161,7 @@ export class LinkCommands {
     this.options.metrics.increment("linking.linked");
     this.options.logger.info("Account linked to Discord", { user: userId });
     const sync = await this.options.service.sync(userId, summary, "always");
+    this.options.service.notify({ action: "linked", discordUserId: userId, source: "discord", link: summary, sync });
     const lines = ["Your Discord account is now linked to your PokeVerse account."];
     if (summary.main) {
       lines.push(`Main character: **${plain(summary.main.name)}**`);

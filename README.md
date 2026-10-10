@@ -18,7 +18,7 @@ Discord is down, gameplay is not affected.
 | `/trainer`, `/pokemon` (autocomplete and artwork from the game), `/server` | anywhere, `#bot-commands` suggested |
 | `/pokeverse setup | status | channel | catches | announce | unlink` for admins | anywhere |
 | Automatic creation of the "PokeVerse Integration" category and channels; never deletes anything | on startup (development) or `setup` |
-| Private staff log of logins and logouts (character, level, account, IP, approximate location, client, session, reason), posted only while the channel is verified private, deleted after 30 days | `Admin Logs` / `#player-activity` |
+| Private staff log of logins and logouts (character, level, account, IP, approximate location, client, session, reason) and of account links and unlinks, posted only while the channel is verified private, deleted after 30 days | `Admin Logs` / `#player-activity` |
 | Account linking with a one-time code from `!discord link` in game: `/link`, `/unlink`, `/account`, `/characters`, `/main`, `/sync` (all private) | anywhere |
 | **Verified Trainer** role for linked members, **Ace Trainer** while the game account has premium time, server nickname = main character | automatic |
 

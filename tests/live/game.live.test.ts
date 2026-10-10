@@ -269,6 +269,16 @@ live("live: bot against the real PokeVerse game server", () => {
     const reused = await integration.commands.handle(linkCommand("link", { code: code! }));
     expect(reused.message.embeds![0]!.description).toMatch(/already linked/);
 
+    await waitFor(() => activity().some((embed) => embed?.title === "Account linked"), 10_000, "link embed");
+    const linkPost = fieldsOf(activity().find((embed) => embed?.title === "Account linked"));
+    console.log("[live] link embed:", JSON.stringify(linkPost));
+    expect(linkPost["Discord user"]).toBe(`<@${LINK_USER}> (\`${LINK_USER}\`)`);
+    expect(linkPost["Main character"]).toMatch(/^Live Linker \(level \d+\)$/);
+    expect(linkPost.Characters).toBe("2");
+    expect(linkPost.Premium).toMatch(/^Yes \(\d+ days left\)$/);
+    expect(linkPost.Roles).toBe("Given: Verified Trainer, Ace Trainer");
+    expect(activity().filter((embed) => embed?.title === "Account linked")).toHaveLength(1);
+
     const status = await actor.call("command", { player: "linker", text: "!discord status" });
     expect(String(status.text)).toContain("is linked to Discord since");
   });
@@ -315,6 +325,11 @@ live("live: bot against the real PokeVerse game server", () => {
     await waitFor(() => guild.members.get(LINK_USER)!.nickname === null, 10_000, "nickname reset");
     const account = await integration.commands.handle(linkCommand("account"));
     expect(account.message.embeds![0]!.description).toMatch(/not linked/);
+    await waitFor(() => activity().some((embed) => embed?.title === "Account unlinked"), 10_000, "unlink embed");
+    const unlinkPost = fieldsOf(activity().find((embed) => embed?.title === "Account unlinked"));
+    console.log("[live] unlink embed:", JSON.stringify(unlinkPost));
+    expect(unlinkPost.How).toBe("`!discord unlink` in the game");
+    expect(unlinkPost.Roles).toBe("Removed: Verified Trainer, Ace Trainer");
   });
 
   it("reconnects after losing the bridge connection and keeps working", async () => {

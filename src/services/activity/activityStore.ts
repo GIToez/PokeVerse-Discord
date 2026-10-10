@@ -19,14 +19,23 @@ const sessionSchema = z.object({
   messageIds: z.array(z.string()).default([]),
 });
 
+/** A posted message that belongs to no session (account link changes). */
+const noticeSchema = z.object({
+  messageId: z.string(),
+  /** Unix seconds. */
+  postedAt: z.number(),
+});
+
 const fileSchema = z.object({
   version: z.literal(1),
   sessions: z.array(sessionSchema).default([]),
+  notices: z.array(noticeSchema).default([]),
   /** Messages whose record was dropped before they could be deleted. */
   pendingDeletes: z.array(z.string()).default([]),
 });
 
 export type SessionRecord = z.infer<typeof sessionSchema>;
+export type NoticeRecord = z.infer<typeof noticeSchema>;
 
 export interface ActivityStoreOptions {
   file: string;
@@ -44,6 +53,7 @@ export interface ActivityStoreOptions {
  */
 export class ActivityStore {
   private readonly sessions = new Map<string, SessionRecord>();
+  private notices: NoticeRecord[] = [];
   private pendingDeletes: string[] = [];
   private timer: NodeJS.Timeout | undefined;
   private readonly maxRecords: number;
@@ -62,6 +72,7 @@ export class ActivityStore {
       for (const session of data.sessions) {
         this.sessions.set(session.sessionId, session);
       }
+      this.notices = data.notices;
       this.pendingDeletes = data.pendingDeletes;
     } catch (error) {
       this.options.logger.error("Activity file is damaged; starting with an empty activity history", {
@@ -119,6 +130,19 @@ export class ActivityStore {
     this.changed();
   }
 
+  get noticeCount(): number {
+    return this.notices.length;
+  }
+
+  /** Records a message that belongs to no session, so it expires like session messages. */
+  addNotice(messageId: string, postedAt: number): void {
+    this.notices.push({ messageId, postedAt });
+    if (this.notices.length > this.maxRecords) {
+      this.pendingDeletes.push(...this.notices.splice(0, this.notices.length - this.maxRecords).map((notice) => notice.messageId));
+    }
+    this.changed();
+  }
+
   /**
    * Removes records whose last activity is older than `cutoff` (unix seconds) and returns
    * the message ids to delete, including ones left over from dropped records.
@@ -126,6 +150,11 @@ export class ActivityStore {
   expire(cutoff: number): string[] {
     const messages = this.pendingDeletes;
     this.pendingDeletes = [];
+    const kept = this.notices.filter((notice) => notice.postedAt >= cutoff);
+    if (kept.length !== this.notices.length) {
+      messages.push(...this.notices.filter((notice) => notice.postedAt < cutoff).map((notice) => notice.messageId));
+      this.notices = kept;
+    }
     for (const [id, record] of this.sessions) {
       const lastActivity = Math.max(record.logoutTime ?? 0, record.loginTime ?? 0, record.recordedAt);
       if (lastActivity < cutoff) {
@@ -143,7 +172,7 @@ export class ActivityStore {
   flush(): void {
     clearTimeout(this.timer);
     this.timer = undefined;
-    const data = { version: 1, sessions: [...this.sessions.values()], pendingDeletes: this.pendingDeletes };
+    const data = { version: 1, sessions: [...this.sessions.values()], notices: this.notices, pendingDeletes: this.pendingDeletes };
     try {
       mkdirSync(dirname(this.options.file), { recursive: true });
       const temp = `${this.options.file}.tmp`;

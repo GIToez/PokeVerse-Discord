@@ -10,7 +10,7 @@ import { checkPrivacy } from "../../src/services/activity/privacy.js";
 import { DeliveryQueue } from "../../src/utils/deliveryQueue.js";
 import { createLogger, silentLogger } from "../../src/utils/logger.js";
 import { Metrics } from "../../src/utils/metrics.js";
-import { BOT_USER, EVERYONE, FakeAdminApi, FakeChannels, FakeGuild, envelope, tempDir } from "../helpers/fakes.js";
+import { BOT_USER, EVERYONE, FakeAdminApi, FakeChannels, FakeGuild, LINKED_USER, envelope, linkSummary, tempDir } from "../helpers/fakes.js";
 import { writeMmdb } from "../helpers/mmdb.js";
 
 const VIEWER_ROLE = "800000000000000001";
@@ -367,5 +367,85 @@ describe("activity log", () => {
     await second.queue.idle();
     expect(first.sink.deleted).toEqual(first.sink.sent.map((item) => item.id));
     expect(second.store.size).toBe(0);
+  });
+});
+
+describe("account link activity", () => {
+  const sync = { memberFound: true, added: ["Verified Trainer", "Ace Trainer"], removed: [], nickname: "set" as const, problems: [] };
+
+  it("posts a link with the Discord user, main character, premium and roles", async () => {
+    const { log, queue, sink, fields, store } = setup({ now: () => 1_700_000_000_000 });
+    log.handleLinkChange({ action: "linked", discordUserId: LINKED_USER, source: "discord", link: linkSummary({ premium: true, premiumDays: 12 }), sync });
+    await queue.idle();
+    expect(sink.sent).toHaveLength(1);
+    expect(sink.sent[0]!.message.embeds![0]!.title).toBe("Account linked");
+    expect(fields()).toMatchObject({
+      "Discord user": `<@${LINKED_USER}> (\`${LINKED_USER}\`)`,
+      Time: "<t:1700000000:f>",
+      "Main character": "Red Trainer (level 25)",
+      Characters: "2",
+      Premium: "Yes (12 days left)",
+      How: "`/link` with a code from the game",
+      Roles: "Given: Verified Trainer, Ace Trainer",
+    });
+    expect(store.noticeCount).toBe(1);
+  });
+
+  it("posts unlinks with how they happened and any sync problems", async () => {
+    const { log, queue, sink, fields } = setup();
+    log.handleLinkChange({ action: "unlinked", discordUserId: LINKED_USER, source: "discord", sync: { ...sync, added: [], removed: ["Verified Trainer"] } });
+    log.handleLinkChange({ action: "unlinked", discordUserId: LINKED_USER, source: "game" });
+    log.handleLinkChange({
+      action: "unlinked",
+      discordUserId: LINKED_USER,
+      source: "admin",
+      by: VIEWER_USER,
+      sync: { ...sync, added: [], problems: ["The bot cannot remove the \"Verified Trainer\" role."] },
+    });
+    await queue.idle();
+    expect(sink.sent.map((item) => item.message.embeds![0]!.title)).toEqual(["Account unlinked", "Account unlinked", "Account unlinked"]);
+    expect(fields(0)).toMatchObject({ How: "`/unlink` in Discord", Roles: "Removed: Verified Trainer" });
+    expect(fields(1).How).toBe("`!discord unlink` in the game");
+    expect(fields(1).Roles).toBeUndefined();
+    expect(fields(2)).toMatchObject({ How: `Staff \`/pokeverse unlink\` by <@${VIEWER_USER}>`, "Discord sync problems": "The bot cannot remove the \"Verified Trainer\" role." });
+  });
+
+  it("is never posted to a channel that is not private", async () => {
+    const { log, queue, sink, guild } = setup();
+    guild.channels.find((channel) => channel.id === sink.id)!.overwrites.shift();
+    log.handleLinkChange({ action: "linked", discordUserId: LINKED_USER, source: "discord", link: linkSummary(), sync });
+    await queue.idle();
+    expect(sink.sent).toHaveLength(0);
+  });
+
+  it("deletes link posts after the retention period, also after a bot restart", async () => {
+    const file = join(tempDir(), "activity.json");
+    let now = 1_700_000_000_000;
+    const first = setup({ file, now: () => now });
+    first.log.handleLinkChange({ action: "linked", discordUserId: LINKED_USER, source: "discord", link: linkSummary(), sync });
+    await first.queue.idle();
+    first.log.stop();
+
+    const second = setup({ file, now: () => now });
+    second.channels.channels.set("playerActivity", first.sink);
+    expect(second.store.noticeCount).toBe(1);
+    now += 29 * 86_400_000;
+    await second.log.enforceRetention();
+    await second.queue.idle();
+    expect(first.sink.deleted).toHaveLength(0);
+    now += 2 * 86_400_000;
+    await second.log.enforceRetention();
+    await second.queue.idle();
+    expect(first.sink.deleted).toEqual([first.sink.sent[0]!.id]);
+    expect(second.store.noticeCount).toBe(0);
+  });
+
+  it("bounds the number of link posts kept", () => {
+    const store = new ActivityStore({ file: join(tempDir(), "activity.json"), logger: silentLogger, maxRecords: 2 });
+    store.addNotice("n1", 1);
+    store.addNotice("n2", 2);
+    store.addNotice("n3", 3);
+    expect(store.noticeCount).toBe(2);
+    expect(store.expire(0)).toEqual(["n1"]);
   });
 });
