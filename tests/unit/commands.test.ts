@@ -211,7 +211,8 @@ describe("command safety", () => {
 
   it("builds valid command definitions with a restricted admin command", () => {
     const definitions = buildCommandDefinitions();
-    expect(definitions.map((command) => command.name)).toEqual(["trainer", "pokemon", "server", "pokeverse"]);
+    expect(definitions.map((command) => command.name)).toEqual(["trainer", "pokemon", "server", "pokeverse", "link", "unlink", "account", "characters", "main", "sync"]);
+    expect(buildCommandDefinitions({ linking: false }).map((command) => command.name)).toEqual(["trainer", "pokemon", "server", "pokeverse"]);
     const admin = definitions.find((command) => command.name === "pokeverse")!;
     expect(admin.default_member_permissions).toBe((1n << 5n).toString());
     const pokemon = definitions.find((command) => command.name === "pokemon")!;

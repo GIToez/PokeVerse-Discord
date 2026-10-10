@@ -26,7 +26,7 @@ describe("channel setup", () => {
     const texts = guild.created.filter((channel) => channel.kind === "text");
     expect(texts.map((channel) => channel.name)).toEqual(EXPECTED_NAMES);
     expect(texts.every((channel) => channel.parentId === category.id)).toBe(true);
-    for (const definition of CHANNEL_DEFINITIONS) {
+    for (const definition of CHANNEL_DEFINITIONS.filter((item) => item.group === "main")) {
       expect(store.getChannelId(definition.purpose)).toBeDefined();
     }
     expect(store.get().guildId).toBe(DEV_GUILD);
@@ -166,8 +166,9 @@ describe("invite link", () => {
   it("requests only the needed permissions and never Administrator", () => {
     const bits = requiredPermissionBits();
     expect(bits & 0x8n).toBe(0n);
-    // View Channel, Send Messages, Embed Links, Attach Files, Read Message History, Manage Channels
-    expect(bits).toBe(0x400n | 0x800n | 0x4000n | 0x8000n | 0x10000n | 0x10n);
+    // View Channel, Send Messages, Embed Links, Attach Files, Read Message History, Manage Channels,
+    // Manage Roles, Manage Nicknames
+    expect(bits).toBe(0x400n | 0x800n | 0x4000n | 0x8000n | 0x10000n | 0x10n | 0x10000000n | 0x8000000n);
     const url = new URL(inviteUrl("123456789012345678", DEV_GUILD));
     expect(url.searchParams.get("scope")).toBe("bot applications.commands");
     expect(url.searchParams.get("permissions")).toBe(bits.toString());

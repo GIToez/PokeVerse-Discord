@@ -21,7 +21,7 @@ const field = (embed: { fields?: Array<{ name: string; value: string }> }, name:
 describe("server status", () => {
   it("creates one persistent message and edits it afterwards", async () => {
     const { status, channel, store } = setup();
-    await status.onConnected({ bootId: "boot1", serverName: "PokeVerse", queued: 0, restarted: false, previousBootId: undefined });
+    await status.onConnected({ bootId: "boot1", serverName: "PokeVerse", queued: 0, features: [], restarted: false, previousBootId: undefined });
     expect(channel.sent).toHaveLength(1);
     const embed = channel.sent[0]!.message.embeds![0]!;
     expect(field(embed, "Status")).toBe("Online");
@@ -46,7 +46,7 @@ describe("server status", () => {
 
   it("shows offline and disconnect information", async () => {
     const { status, channel, game } = setup();
-    await status.onConnected({ bootId: "boot1", serverName: "PokeVerse", queued: 0, restarted: false, previousBootId: undefined });
+    await status.onConnected({ bootId: "boot1", serverName: "PokeVerse", queued: 0, features: [], restarted: false, previousBootId: undefined });
     game.connected = false;
     status.onDisconnected("connection closed");
     await status.render();
@@ -59,13 +59,13 @@ describe("server status", () => {
 
   it("detects game restarts across bot restarts using the saved boot id", async () => {
     const first = setup();
-    await first.status.onConnected({ bootId: "boot1", serverName: "PokeVerse", queued: 0, restarted: false, previousBootId: undefined });
+    await first.status.onConnected({ bootId: "boot1", serverName: "PokeVerse", queued: 0, features: [], restarted: false, previousBootId: undefined });
     expect(first.status.current.lastRestartAt).toBeUndefined();
     expect(first.store.get().lastBootId).toBe("boot1");
 
     // The bot restarts, then the game restarts: the new boot id differs from the saved one.
     const second = setup(first.file);
-    await second.status.onConnected({ bootId: "boot2", serverName: "PokeVerse", queued: 0, restarted: false, previousBootId: undefined });
+    await second.status.onConnected({ bootId: "boot2", serverName: "PokeVerse", queued: 0, features: [], restarted: false, previousBootId: undefined });
     expect(second.status.current.lastRestartAt).toBeGreaterThan(0);
     expect(second.metrics.get("status.restarts_detected")).toBe(1);
     expect(new StateStore(first.file, "development").get().lastRestartAt).toBe(second.status.current.lastRestartAt);
