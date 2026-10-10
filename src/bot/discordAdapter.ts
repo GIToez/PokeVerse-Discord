@@ -36,7 +36,11 @@ function toBits(names: PermissionName[]): bigint {
 }
 
 function toNames(bits: Readonly<PermissionsBitField> | null | undefined): PermissionName[] {
-  return bits ? (bits.toArray() as PermissionName[]) : [];
+  if (!bits) {
+    return [];
+  }
+  // Guild-level member permissions keep only the flags the roles set; Administrator implies all.
+  return bits.has(PermissionFlagsBits.Administrator) ? (Object.keys(PermissionFlagsBits) as PermissionName[]) : (bits.toArray() as PermissionName[]);
 }
 
 function toInfo(channel: GuildBasedChannel): GuildChannelInfo {
@@ -248,7 +252,9 @@ export class DiscordGuildPort implements GuildPort {
 
   async fetchMember(userId: string): Promise<MemberInfo | undefined> {
     try {
-      const member = await this.guild.members.fetch(userId);
+      // Always from the API: without the Server Members intent the cache never sees role or
+      // nickname changes, including the bot's own.
+      const member = await this.guild.members.fetch({ user: userId, force: true });
       return {
         id: member.id,
         roleIds: [...member.roles.cache.keys()],
