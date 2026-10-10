@@ -98,11 +98,58 @@ any token: the packaging script fails if it finds one.
   that is impossible, use a private network with `discordBridgeAllowRemote = true` /
   `BRIDGE_ALLOW_REMOTE=true` and a firewall. Never expose port 7199 to the internet.
 - **Monitoring**: `/pokeverse status` shows the bridge connection, queue sizes, dropped
-  messages and missing permissions.
+  messages, missing permissions, the activity log settings and whether `#player-activity`
+  is private.
+
+## Player activity and account linking (Phase 2)
+
+New settings, all optional, with these defaults when they are not in `.env.production`
+(the game's `pokeverse-ctl` does not write them):
+
+| Key | Default | Meaning |
+| --- | --- | --- |
+| `ACTIVITY_LOG_ENABLED` | `true` | Private Admin Logs category with `#player-activity` |
+| `ACTIVITY_LOG_VIEWER_ROLE_IDS` / `_USER_IDS` | empty = the admin IDs | Who can see the channel |
+| `ACTIVITY_LOG_IP` | `full` | `full`, `masked` or `hidden` |
+| `ACTIVITY_RETENTION_DAYS` | `30` | Records and posted messages are deleted afterwards |
+| `ACTIVITY_FILE` | `data/activity.production.json` | Session records (no IPs, no account ids) |
+| `GEOIP_DATABASE` | empty (off) | Local MaxMind-format database, see [PRIVACY.md](PRIVACY.md) |
+| `LINKING_ENABLED` | `true` | `/link` and the account commands |
+| `VERIFIED_ROLE_NAME` | `Verified Trainer` | Role for linked members |
+| `PREMIUM_ROLE_ENABLED` / `PREMIUM_ROLE_NAME` | `true` / `Ace Trainer` | Role while the account has premium time |
+| `NICKNAME_SYNC` | `true` | Server nickname = main character |
+| `LINK_RESYNC_MINUTES` | `15` | Periodic check of all links (premium expiry, in-game unlinks) |
+| `DISCORD_MEMBERS_INTENT` | `false` | Instant role restore on rejoin; needs Server Members Intent in the Developer Portal |
+
+Steps for an existing production install:
+
+1. Game: build and deploy the Phase 2 patches. The `discord_account_links` table is created
+   by the existing `pokeverse-extensions.sql` step (`CREATE TABLE IF NOT EXISTS`); no
+   other table changes. The new `config.lua` settings default to on but do nothing while
+   `discordBridgeEnabled = false`. Set `discordBridgeSessionIps = false` to never send IPs.
+2. Discord: give the bot role **Manage Roles** and **Manage Nicknames** (the `invite`
+   command prints the new URL), and move the bot role **above** Verified Trainer and Ace
+   Trainer. Do not give it Administrator.
+3. Bot: production has `AUTO_SETUP=false`, so run `./start-discord.sh setup` once after the
+   update. It creates Admin Logs, `#player-activity` (private to the viewer IDs) and the two
+   roles, and changes nothing else. Until then no activity is posted and the account
+   commands report that the roles are not set up.
+4. Check `/pokeverse status`: `#player-activity` must be reported as private. If anyone else
+   can see it, the bot posts nothing there.
+
+Either side can be updated first: a Phase 1 game simply has no activity or linking, and a
+Phase 1 bot ignores the new events (see [GAME_INTEGRATION.md](GAME_INTEGRATION.md#compatibility)).
+
+**Merging this repository's `main` updates production**: the game's "Live server" workflow
+builds the production bot from PokeVerse-Discord `main` at its next deploy. Merge only when
+the game side and the Discord role steps above are ready.
+
+Recovery and retention procedures (lost Discord account, wrong link, removing a player's
+data) are in [ACCOUNT_LINKING.md](ACCOUNT_LINKING.md) and [PRIVACY.md](PRIVACY.md).
 
 ## Before the first production deployment
 
-- Merge the game bridge patches into the game repository (review first).
+- Merge the game Phase 2 patches into the game repository (review first).
 - Run the manual Discord checklist in [TESTING.md](TESTING.md) in the development guild.
 - Review the legendary list and the default catch mode for the production community.
 - Decide on log retention for `logs/bot-production.log` (the bot does not rotate it; use

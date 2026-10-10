@@ -150,13 +150,35 @@ Facts taken from the PR #5 code and used by the bot:
 
 ## Game-side changes
 
-Four commits on top of PR #5, kept as a patch series in
+The Phase 1 bridge is on game `main` (applied through
+[PR #6](https://github.com/GIToez/PokeVerse/pull/6)). Phase 2 adds four commits on top of
+`main` at `49abf2b`, kept as a patch series in
 [integrations/pokeverse-game](../integrations/pokeverse-game/README.md) because the bot's
 automation has no write access to the game repository (push returned HTTP 403). They are
-meant for a separate branch `cursor/discord-bridge-ef3d` and a PR against the phase 1
-branch. The full protocol reference is `docs/discord-bridge.md` in that series.
+meant for a branch `cursor/discord-phase2-ef3d` and a PR against game `main`. The full
+protocol reference is `docs/discord-bridge.md` in that series.
 
-Summary:
+### Phase 2 (player sessions and account linking)
+
+- **C++**: session tracking in `Player::onPlacedCreature` (after the login scripts accepted
+  the player) and `Game::removeCreature`; reasons recorded only where the server knows them
+  (client logout, connection lost, ping timeout, `/kick`, death, shutdown, server closed).
+  Link codes: 8 Crockford base32 characters from `RAND_bytes`, stored as SHA-256 hashes in
+  memory, 10-minute lifetime, request and redeem rate limits. Character create/delete in
+  the account service sends `account_characters` for linked accounts.
+- **Lua**: `link.*` and `admin.sessions` handlers, the `!discord` / `/discord` talkaction
+  (`link`, `status`, `unlink` with confirmation), `/kick` and `/mkick` reasons.
+- **Database**: one new table `discord_account_links` (account id unique, Discord id
+  `VARCHAR(20)` unique, main character id, linked time) in
+  `schemas/pokeverse-extensions.sql`, created with `CREATE TABLE IF NOT EXISTS` and applied
+  by the existing install paths. No existing table changes.
+- **Config** (`config.lua`, all optional): `discordBridgePlayerSessions` (`true`),
+  `discordBridgeSessionIps` (`true`), `discordBridgeAccountLinking` (`true`). They only do
+  anything while `discordBridgeEnabled = true`.
+- **Tests**: `scripts/discord-bridge-test.py` covers sessions, reasons, reconnects, codes,
+  rate limits, linking rules, main fallback and premium (73 checks).
+
+### Phase 1 summary
 
 - **C++** (`src/discordbridge.*`): TCP listener on its own thread. Game code only appends to
   bounded in-memory queues, so the game never blocks on the bot. Hooks in `Game::setGameState`
@@ -177,9 +199,19 @@ Summary:
 - Shared-secret authentication: the server sends a random nonce; the bot answers with
   `HMAC-SHA256(secret, nonce)`. Secrets under 16 characters keep the bridge disabled.
 - The secret lives only in the ignored `config.local.lua` and the bot's `.env` file.
-- The only write operation is `chat.send`, which displays a message in channel 7.
-  Lookups are read-only and run inside the game; the bot has no database access.
+- Write operations: `chat.send` (displays a message in channel 7) and the `link.*`
+  requests, which only change `discord_account_links`. Lookups are read-only and run
+  inside the game; the bot has no database access.
 - Staff characters are hidden from `/trainer`.
+- Per-operation authorization: every `link.*` request carries the `discordUserId` it acts
+  for. The bot sends the id of the user who ran the command; only the admin recovery
+  command `/pokeverse unlink` sends another user's id, and it checks the bot's admin list
+  first. A link can only be created with a code that was shown in game to a logged-in
+  character of the account.
+- `admin`-scoped events (`player_login`, `player_logout`) and the `admin.sessions` /
+  `link.list` requests are used only for the private `#player-activity` channel and for
+  reconciliation. They never reach public channels or public command replies. Link results
+  never contain account ids, account names or IP addresses.
 
 ## Protocol (version 1)
 
@@ -188,7 +220,8 @@ Newline-delimited JSON over TCP (default port 7199).
 ```
 server -> {"type":"hello","protocol":1,"nonce":"..."}
 bot    -> {"type":"auth","hmac":"..."}
-server -> {"type":"welcome","protocol":1,"bootId":"...","serverName":"PokeVerse","queued":N}
+server -> {"type":"welcome","protocol":1,"bootId":"...","serverName":"PokeVerse","queued":N,
+           "features":["playerSessions","accountLinking"]}
 server -> {"type":"event","id":"<bootId>-<seq>","time":...,"event":{"kind":"catch",...}}
 bot    -> {"type":"request","requestId":"1","method":"trainer.lookup","params":{"name":"Ash"}}
 server -> {"type":"response","requestId":"1","ok":true,"result":{...}}
@@ -202,6 +235,10 @@ server -> {"type":"response","requestId":"1","ok":true,"result":{...}}
 | `broadcast` | `#game-announcements` |
 | `restart_warning` | `#game-announcements` |
 | `server_state` | `#server-status` message |
+| `player_login` (scope `admin`) | `#player-activity` login embed |
+| `player_logout` (scope `admin`) | `#player-activity` logout embed |
+| `account_link` (scope `account`) | Removes roles and nickname after an in-game unlink |
+| `account_characters` (scope `account`) | Re-syncs the member after a character was created or deleted |
 
 | Request | Used by |
 | --- | --- |
@@ -210,9 +247,44 @@ server -> {"type":"response","requestId":"1","ok":true,"result":{...}}
 | `pokemon.lookup`, `pokemon.search` | `/pokemon` and its autocomplete |
 | `server.status` | `/server`, `#server-status`, `check-bridge` |
 | `bridge.config` | Chat length limits, legendary list |
+| `admin.sessions` | Reconciling open sessions after a bot or game restart |
+| `link.redeem` | `/link` |
+| `link.account` | `/account`, `/sync`, role and nickname sync |
+| `link.characters` | `/characters`, `/main` autocomplete |
+| `link.setMain` | `/main` |
+| `link.unlink` | `/unlink`, `/pokeverse unlink` |
+| `link.list` | Periodic resync (premium expiry, Ace Trainer) and startup |
 
 The bot validates every message with zod schemas (`src/integrations/pokeverse/protocol.ts`)
 and ignores unknown event kinds, so the game can add events without breaking older bots.
+
+### Compatibility
+
+The protocol version stays `1`; everything Phase 2 added is optional. The welcome
+`features` list says which parts the server has switched on:
+
+| Game server | Bot behaviour |
+| --- | --- |
+| Phase 1 (no `features` field) | Phase 1 features work. `#player-activity` stays empty; `/link` and the other account commands answer that linking is not available on this server. |
+| Phase 2, `playerSessions` off | No login/logout embeds; linking works. |
+| Phase 2, `accountLinking` off | Activity log works; account commands answer that linking is not available, as with a Phase 1 server. |
+| Phase 2, both on | Everything. |
+
+A Phase 1 bot connected to a Phase 2 server ignores the new event kinds and never sends the
+new requests, so the two can be upgraded in either order.
+
+### Player sessions in the bot
+
+- Only `player_login` events (successful logins) open a session; the bot de-duplicates by
+  event id and session id, so a re-delivered event posts nothing.
+- A logout embed is posted for `player_logout` only. The reason line is shown only when
+  the game sent a `reason`; the bot never guesses one.
+- A bot disconnect or restart does not end sessions. On connect the bot compares its open
+  sessions with `admin.sessions`: sessions of an old `bootId` are closed as "server
+  restarted"; sessions that disappeared while the bot was away are closed without a reason
+  and marked as missed.
+- Session state lives in `data/activity.<profile>.json` (no IP addresses, no account ids),
+  limited to 20000 entries and pruned after the retention period (default 30 days).
 
 ### Delivery guarantees
 
