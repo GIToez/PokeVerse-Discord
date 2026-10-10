@@ -208,12 +208,14 @@ describe("player activity and account linking pipeline", () => {
   });
 
   it("closes sessions of a previous game run after a restart", async () => {
-    const { server, sink } = await phase2();
+    const { server, sink, setOnline } = await phase2();
+    setOnline([{ sessionId: "boot1-1", character: "Red", level: 5 }]);
     server.emit({ kind: "player_login", scope: "admin", sessionId: "boot1-1", character: "Red", level: 5, accountId: 2, loginTime: 1_700_000_000 });
     await waitFor(() => sink.sent.length === 1);
+    setOnline([]);
     await server.restart("boot2");
-    await waitFor(() => sink.sent.length === 2, 5000, "restart close");
-    expect(sink.sent[1]!.message.embeds![0]!.title).toBe("Session ended by a server restart");
+    await waitFor(() => sink.sent.length === 2, 10_000, "restart close");
+    expect(sink.sent.map((item) => item.message.embeds![0]!.title)).toEqual(["Login", "Session ended by a server restart"]);
   });
 
   it("syncs a member when the game reports a link change and when they rejoin", async () => {
