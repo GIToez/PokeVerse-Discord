@@ -1,6 +1,113 @@
 # Game integration
 
-## Repository audit (October 2026)
+## Phase 2 audit (October 10, 2026)
+
+Audit made before the Phase 2 work (account linking, character management, admin activity
+logs). Game facts refer to [PokeVerse](https://github.com/GIToez/PokeVerse) `main` at
+`49abf2b`.
+
+### Repositories and branches
+
+- **PokeVerse-Discord** `main` contains the Phase 1 bot ([PR #1](https://github.com/GIToez/PokeVerse-Discord/pull/1), merged).
+  Phase 2 is developed on `cursor/phase2-account-linking-ef3d`.
+- **PokeVerse** `main` contains Phase 1 ([PR #5](https://github.com/GIToez/PokeVerse/pull/5)),
+  the Discord bridge (patches 0001-0004, applied through
+  [PR #6](https://github.com/GIToez/PokeVerse/pull/6)) and the OVH live server
+  ([PR #7](https://github.com/GIToez/PokeVerse/pull/7)). Open: client PRs #8 and #9 (no
+  server changes relevant here). The bot's automation still has no write access to the game
+  repository, so game-side Phase 2 changes are again shipped as a patch series in
+  `integrations/pokeverse-game/` (branch name `cursor/discord-phase2-ef3d`).
+- **Production coupling**: the game repository's "Live server" workflow builds the
+  production bot from PokeVerse-Discord `main` and deploys it to OVH (by hand, or on pushes
+  to game `main` when `LIVE_AUTO_DEPLOY=true`). Its `pokeverse-ctl` writes only
+  `DISCORD_TOKEN`, `DISCORD_APPLICATION_ID`, `DISCORD_GUILD_ID`, the admin IDs and the
+  bridge settings into `.env.production`. Every new bot setting therefore needs a safe
+  default, and merging the bot to `main` means it reaches production at the next deploy.
+
+### Bot architecture (existing)
+
+- discord.js 14, guild-scoped slash commands registered on every start
+  (`src/commands/definitions.ts`, `BotApp.start`), routed by `CommandRouter`.
+- `GameIntegration` holds all services behind port interfaces (`ChannelSink`,
+  `ChannelDirectory`, `GuildPort`), so services are tested without Discord.
+- Channel setup (`src/setup/`) creates or adopts channels, persists IDs in
+  `data/state.<profile>.json` and never deletes or re-permissions anything. The bot has no
+  role management yet and does not request Manage Roles or Manage Nicknames.
+- Bridge client: NDJSON over TCP, HMAC handshake, reconnect with backoff, `bootId`
+  restart detection, zod-validated events, unknown event kinds ignored.
+
+### Accounts and characters (game database)
+
+- `accounts`: `id` INT AUTO_INCREMENT primary key, `name` (the login name, half of the
+  credentials), `password` (hash), `premdays`, `lastday`, `group_id`, plus PokeVerse columns.
+  There is no Discord or external identity column.
+- `players`: `id` INT AUTO_INCREMENT, `account_id` (foreign key to `accounts.id`,
+  `ON DELETE CASCADE`), `name`, `world_id`, `level`, `vocation`, `group_id`, `lastlogin`,
+  `lastlogout`, `lastip`, `online`, `deleted` (soft delete; unique key `(name, deleted)`).
+  Characters belong to exactly one account through `account_id`.
+- **Creation order**: there is **no creation timestamp**. Characters are created by the
+  server's account service (`src/protocolaccount.cpp`, client "create character") through
+  the `pokeverse_add_character` procedure, or by the `pokeverse_create_character` helper;
+  both insert without an explicit `id`, so `players.id` (InnoDB AUTO_INCREMENT, persistent in
+  MariaDB 10.2.4+) increases in creation order. Exceptions would be rows inserted with an
+  explicit `id` by hand or imported from another database. Phase 2 therefore uses
+  "lowest `players.id` among the account's non-deleted characters of this world" as the
+  documented, deterministic first-character rule and tells the player which character was
+  chosen and how to change it.
+- Character deletion: `IOLoginData::deleteCharacter` sets `deleted = 1`. There is no rename
+  feature in the game.
+- Premium: `accounts.premdays > 0` (`65535` = unlimited, never decremented). Days are
+  subtracted by `IOLoginData::removePremium` (on login and at startup with
+  `removePremiumOnInit`). `freePremium` (config, `false`) and the group flag
+  `IsAlwaysPremium` make everyone or staff premium in game; Phase 2's "Ace Trainer" role uses
+  the account's real premium days only.
+- Schema changes are idempotent SQL: `core/server/schemas/pokeverse-extensions.sql`
+  (`CREATE TABLE IF NOT EXISTS`, `ADD COLUMN IF NOT EXISTS`) is re-applied by the Windows
+  "Setup Database.bat" and by `pokeverse-ctl` on every live install. There are no numbered
+  migrations; new tables follow this convention.
+
+### Sessions, login and logout (game server)
+
+- Successful world entry: `Player::onPlacedCreature` runs the Lua `onLogin` scripts; if any
+  returns false the player is kicked. A login is only real after that call succeeded.
+- Lua `onLogout(cid, forceLogout)` can return false to **cancel** a logout, so it is not a
+  reliable "player left" signal. The reliable point is `Game::removeCreature` for a player.
+- Disconnect causes visible in the source:
+  - client logout request (`ProtocolGame::parseLogout`, packet `0x14`);
+  - connection lost with `disconnectAtExit = true` (default): `Player::onThink` removes the
+    player when the client is gone;
+  - ping timeout (`lastPong` older than 60 s / 600 s): `Player::onThink`;
+  - GM `/kick`: `doRemoveCreature` from `talkactions/scripts/kick.lua`;
+  - death: `Player::onDeath` paths remove and kick the player;
+  - server shutdown or close: `Game::setGameState` kicks every player.
+  Other removals (scripts calling `doRemoveCreature`, a second login of the same character)
+  carry no reliable reason.
+- IP address: `Player::getIP()` (IPv4, from the connection, falls back to `lastIP`), Lua
+  `getPlayerIp(cid)`; `players.lastip` stores the last one. Client type:
+  `Player::getOperatingSystem()` (`CLIENTOS_WINDOWS`, `CLIENTOS_OTCLIENT_*`, ...) and
+  `getClientVersion()`.
+- There are no session IDs. Session identity in Phase 2: `<bootId>-s<counter>`, created in
+  C++ when the login succeeded and closed in `Game::removeCreature`.
+- Server restarts: the bridge `bootId` changes; sessions of the old boot that were not
+  closed by a logout event are closed by the bot as "server restarted".
+- Bot disconnects: the game queues events (up to 2000) while no bot is connected, so a bot
+  restart does not lose or invent logouts; the bot never infers a logout from its own
+  connection state.
+
+### In-game commands
+
+Talkactions use both `/` and `!` prefixes (`!frags`, `!uptime`, `!pos`, `/online`, ...).
+`!discord` and `/discord` are unused. Talkaction text that a script handles is not shown to
+other players, and `doPlayerSendTextMessage` is private to the player.
+
+### Bridge (existing)
+
+Protocol version 1 (`docs/discord-bridge.md`), C++ listener in `src/discordbridge.*` with
+OpenSSL (`HMAC`, `RAND_bytes` already linked), Lua handlers in
+`data/lib/ps/systems/056-discordBridge.lua`, JSON library `013-json.lua`. Requests run on
+the dispatcher thread, so request handlers are naturally serialized.
+
+## Phase 1 repository audit (October 2026)
 
 ### PokeVerse-Discord (this repository)
 
