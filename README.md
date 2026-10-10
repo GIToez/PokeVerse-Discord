@@ -16,8 +16,11 @@ Discord is down, gameplay is not affected.
 | GM broadcasts, restart/global save warnings, manual announcements | `#game-announcements` |
 | One live status message (online/offline, players, uptime, restarts) | `#server-status` |
 | `/trainer`, `/pokemon` (autocomplete and artwork from the game), `/server` | anywhere, `#bot-commands` suggested |
-| `/pokeverse setup | status | channel | catches | announce` for admins | anywhere |
+| `/pokeverse setup | status | channel | catches | announce | unlink` for admins | anywhere |
 | Automatic creation of the "PokeVerse Integration" category and channels; never deletes anything | on startup (development) or `setup` |
+| Private staff log of logins and logouts (character, level, account, IP, approximate location, client, session, reason), posted only while the channel is verified private, deleted after 30 days | `Admin Logs` / `#player-activity` |
+| Account linking with a one-time code from `!discord link` in game: `/link`, `/unlink`, `/account`, `/characters`, `/main`, `/sync` (all private) | anywhere |
+| **Verified Trainer** role for linked members, **Ace Trainer** while the game account has premium time, server nickname = main character | automatic |
 
 Out of scope for this version: GTS, trading, marketplace, purchases, catching or battling
 through Discord.
@@ -49,6 +52,8 @@ The game server needs the bridge patches from
 | [docs/DISCORD_CONFIGURATION.md](docs/DISCORD_CONFIGURATION.md) | Developer Portal, intents, invite, permissions, channels |
 | [docs/COMMANDS.md](docs/COMMANDS.md) | Slash commands and CLI commands |
 | [docs/GAME_INTEGRATION.md](docs/GAME_INTEGRATION.md) | Repository audit, bridge protocol, game data mapping |
+| [docs/ACCOUNT_LINKING.md](docs/ACCOUNT_LINKING.md) | How linking works, roles, nicknames, security and account recovery |
+| [docs/PRIVACY.md](docs/PRIVACY.md) | What the activity log records, IP handling, GeoIP, retention and deletion |
 | [docs/TESTING.md](docs/TESTING.md) | Test suites and what was tested against real systems |
 | [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md) | Production package, systemd, separation from development |
 
@@ -69,7 +74,8 @@ src/
   config/     .env loading and validation (zod)
   events/     messageCreate / interactionCreate handlers
   integrations/pokeverse/  game bridge client (NDJSON over TCP, HMAC auth, reconnect) and typed game API
-  services/   chat, catches, spawns, announcements, status, trainer and Pokemon lookups
+  services/   chat, catches, spawns, announcements, status, trainer and Pokemon lookups,
+              activity log (privacy check, IP masking, GeoIP, retention), account linking
   setup/      channel definitions, channel setup, invite link
   utils/      logger, rate limits, delivery queue, state store
 tests/        unit, integration (fake bridge server) and live (real game server) tests

@@ -3,8 +3,9 @@
 ## Slash commands
 
 All commands work only in the configured server (`DISCORD_GUILD_ID`). Errors, "not found"
-and rate-limit replies are only visible to the person who used the command; results are
-public.
+and rate-limit replies are only visible to the person who used the command; results of
+`/trainer`, `/pokemon` and `/server` are public. Account commands and `/pokeverse` always
+reply privately.
 
 ### `/trainer name:<character>`
 
@@ -35,6 +36,22 @@ and whether it is shiny, legendary and catchable. Artwork is the game client's p
 Current status: online/offline, players online, uptime, last restart. The same data is
 kept up to date in the `#server-status` message.
 
+### Account commands
+
+Available while `LINKING_ENABLED=true` (default). Every reply is private, and every request
+acts only for the Discord user who ran the command. When the game server is offline, or runs
+a build without account linking, the commands say so and change nothing. See
+[ACCOUNT_LINKING.md](ACCOUNT_LINKING.md).
+
+| Command | Effect |
+| --- | --- |
+| `/link code:<code>` | Links your Discord account to the game account that requested the code with `!discord link`. Gives Verified Trainer (and Ace Trainer with premium time) and sets your server nickname to your main character. 5 attempts per 10 minutes per user. |
+| `/unlink` | Asks for confirmation (Unlink / Cancel buttons, valid 60 seconds, only for you), then removes the link, both roles and the nickname the bot set. |
+| `/account` | Linked since, main character, number of characters, premium days, and whether your roles and nickname are in sync. Never shows account numbers or IP addresses. |
+| `/characters` | Your characters on this world with level, class, main and online tags. |
+| `/main character:<name>` | Choose your main character (autocomplete lists only your own). Updates the nickname. |
+| `/sync` | Re-reads the link from the game and fixes roles and nickname now. 2 per minute. |
+
 ### `/pokeverse` (admins)
 
 Visible to members with **Manage Server** by default; see
@@ -42,11 +59,12 @@ Visible to members with **Manage Server** by default; see
 
 | Subcommand | Effect |
 | --- | --- |
-| `setup` | Create missing channels, adopt existing ones by name, report missing permissions. Never deletes or changes existing channels. |
-| `status` | Profile, bridge connection, catch mode, chat and spawn settings, queue sizes, channel/permission report, counters. |
+| `setup` | Create missing channels (including the private `Admin Logs` / `#player-activity`) and the Verified Trainer / Ace Trainer roles, adopt existing ones by name, report missing permissions and whether `#player-activity` is private. Never deletes or changes existing channels or roles. |
+| `status` | Profile, bridge connection, catch mode, chat and spawn settings, activity log and linking state, queue sizes, channel/permission/privacy report, counters. |
 | `channel purpose:<feature> channel:<#channel>` | Use an existing text channel for a feature (stored in the state file). |
 | `catches mode:<mode>` | `all`, `rare_only` (shiny, legendary and `CATCH_RARE_SPECIES`), `shiny_legendary_only`, `off`. Stored in the state file and takes effect immediately. |
 | `announce category:<news|event|maintenance> text:<text> [title]` | Post an announcement in `#game-announcements` with your display name. |
+| `unlink user_id:<Discord user ID>` | Recovery: remove the link of a Discord user (for example someone who lost their Discord account), with their roles. Logged with the admin's ID. |
 
 ## CLI
 
@@ -72,6 +90,15 @@ unreachable for `check-bridge`), `2` configuration error.
 
 ## In-game
 
-Nothing new for players. Messages in **Game-Chat** are relayed to `#game-chat` and Discord
-messages appear there as `[Discord] Name: text`. GM `/b` broadcasts and `/shutdown`
-warnings are posted to `#game-announcements`.
+Messages in **Game-Chat** are relayed to `#game-chat` and Discord messages appear there as
+`[Discord] Name: text`. GM `/b` broadcasts and `/shutdown` warnings are posted to
+`#game-announcements`.
+
+`!discord` (or `/discord`) manages the account link. Replies are only shown to the player.
+
+| Command | Effect |
+| --- | --- |
+| `!discord link` | Shows a one-time code (also in a popup), valid 10 minutes. Then type `/link code:<code>` in Discord. Refused while the account is already linked. |
+| `!discord status` | Whether the account is linked, and since when. |
+| `!discord unlink` | Asks to type `!discord unlink confirm` within 60 seconds, then removes the link. Logging in to the game is the proof of ownership, so this is also how a player recovers from a lost Discord account. |
+| `!discord help` | Usage. |

@@ -14,7 +14,8 @@ the production server when `PRODUCTION_GUILD_ID` is set.
      commit it or post it anywhere; reset it immediately if it leaks.
    - Turn **Public Bot** off, so only you can invite it.
    - Under **Privileged Gateway Intents**, enable **Message Content Intent** and save.
-     Leave Presence and Server Members off; the bot does not need them.
+     Leave Presence off. **Server Members** is optional: enable it only together with
+     `DISCORD_MEMBERS_INTENT=true` (see below).
 4. **Installation** (optional): no install link is needed; the bot prints its own invite link.
 
 ### Intents
@@ -24,9 +25,11 @@ the production server when `PRODUCTION_GUILD_ID` is set.
 | `Guilds` | no | Channels, roles, slash commands |
 | `GuildMessages` | no | Receive messages in `#game-chat` |
 | `MessageContent` | **yes** | Read the text of `#game-chat` messages to relay them into the game |
+| `GuildMembers` | **yes**, optional | Only with `DISCORD_MEMBERS_INTENT=true`: give roles and nickname back immediately when a linked member leaves and rejoins. Without it, the periodic resync (`LINK_RESYNC_MINUTES`, default 15) or `/sync` does it. |
 
-Without Message Content the login fails with "Used disallowed intents"; the bot explains
-this and exits. Bots in fewer than 100 servers can enable it without verification.
+Without Message Content (or Server Members when `DISCORD_MEMBERS_INTENT=true`) the login
+fails with "Used disallowed intents"; the bot explains this and exits. Bots in fewer than
+100 servers can enable them without verification.
 
 ## Invite link
 
@@ -35,7 +38,7 @@ node dist/bot.cjs invite          # or: configure-discord-dev.bat prints it
 ```
 
 The link uses the scopes `bot applications.commands` and exactly these permissions
-(integer `117776`). **Administrator is not requested.**
+(integer `402770960`). **Administrator is not requested.**
 
 | Permission | Why |
 | --- | --- |
@@ -44,10 +47,31 @@ The link uses the scopes `bot applications.commands` and exactly these permissio
 | Embed Links | Rich embeds |
 | Attach Files | Pokemon artwork from the game client |
 | Read Message History | Find and edit the status message |
-| Manage Channels | Create the "PokeVerse Integration" category and channels |
+| Manage Channels | Create the "PokeVerse Integration" and private "Admin Logs" categories and their channels |
+| Manage Roles | Create the Verified Trainer and Ace Trainer roles and give/remove them on link changes |
+| Manage Nicknames | Set a linked member's server nickname to their main character |
 
 Manage Channels is only needed for automatic setup. If you prefer, create the channels
 yourself, assign them with `/pokeverse channel`, and remove the permission afterwards.
+Manage Roles and Manage Nicknames are only needed with account linking (`LINKING_ENABLED`).
+
+An already invited bot keeps its old permissions: add Manage Roles and Manage Nicknames to
+the bot's role (**Server Settings > Roles > PokeVerse**) or open the new invite link.
+
+### Role order
+
+Discord only lets a bot give roles that are **below its own highest role**, and only change
+nicknames of members whose highest role is below it. After the first setup, drag the bot's
+role (named after the bot, e.g. "PokeVerse") **above Verified Trainer and Ace Trainer**
+in **Server Settings > Roles**. `/pokeverse status` reports roles the bot cannot assign.
+The server owner's nickname can never be changed by a bot; the bot reports this instead of
+failing.
+
+### Do not give the bot Administrator
+
+The bot never needs it. Administrator also makes the bot (and any role that has it) see every
+channel, including `#player-activity`; `/pokeverse setup` and `status` list such roles. If
+you gave Administrator while testing, remove it and grant the permissions above instead.
 
 ## Server IDs
 
@@ -72,7 +96,20 @@ PokeVerse Integration
   #game-announcements   news, GM broadcasts, restarts    read-only
   #server-status        one live status message          read-only
   #bot-commands         /trainer, /pokemon, /server      members can write
+Admin Logs                                               private (activity log enabled)
+  #player-activity      staff-only login/logout log      read-only, authorized viewers only
 ```
+
+`Admin Logs` and `#player-activity` are created with `@everyone` denied View Channel, the bot
+allowed, and `ACTIVITY_LOG_VIEWER_ROLE_IDS` / `ACTIVITY_LOG_VIEWER_USER_IDS` allowed to view
+(read-only). With both empty, `DISCORD_ADMIN_ROLE_IDS` / `DISCORD_ADMIN_USER_IDS` are used;
+with those empty too, only the server owner and Administrator roles can see it. Before every
+post the bot checks who can see the channel; if `@everyone` or any other role or member can,
+nothing is posted until it is fixed. See [PRIVACY.md](PRIVACY.md).
+
+With account linking enabled, setup also creates (or adopts by name) the roles **Verified
+Trainer** and **Ace Trainer** (`VERIFIED_ROLE_NAME`, `PREMIUM_ROLE_NAME`) without any
+permissions. You can rename, recolor or move them; the saved role IDs keep working.
 
 Rules:
 
