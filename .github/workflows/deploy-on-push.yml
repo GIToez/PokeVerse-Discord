@@ -1,0 +1,22 @@
+name: Start the production deploy
+
+# After CI passes on main, starts "Discord bot auto-deploy" in PokeVerse, which builds the
+# bot and deploys it to the live server. PV_DISPATCH_TOKEN: fine-grained token on
+# GIToez/PokeVerse with only Actions: Read and write.
+on:
+  workflow_run:
+    workflows: [CI]
+    types: [completed]
+    branches: [main]
+
+permissions: {}
+
+jobs:
+  dispatch:
+    if: github.event.workflow_run.conclusion == 'success'
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Start Discord bot auto-deploy in PokeVerse
+        env:
+          GH_TOKEN: ${{ secrets.PV_DISPATCH_TOKEN }}
+        run: gh workflow run discord-bot-autodeploy.yml -R GIToez/PokeVerse --ref main
