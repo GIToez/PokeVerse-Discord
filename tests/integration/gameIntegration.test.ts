@@ -219,7 +219,11 @@ describe("player activity and account linking pipeline", () => {
   });
 
   it("syncs a member when the game reports a link change and when they rejoin", async () => {
-    const { server, integration, guild, store, links, sink } = await phase2();
+    const { server, integration, guild, store, links, sink, requests } = await phase2();
+    // The resync after connecting runs outside the sync queue; let it finish so it cannot
+    // clean up the member before the unlink event's own sync below.
+    await waitFor(() => requests.includes("link.list"), 3000, "resync after connect");
+    await integration.linking!.resyncAll();
     const member = guild.addMember(LINKED_USER);
     links.set(LINKED_USER, linkSummary({ premium: true }));
     server.emit({ kind: "account_link", scope: "account", action: "linked", discordUserId: LINKED_USER });
