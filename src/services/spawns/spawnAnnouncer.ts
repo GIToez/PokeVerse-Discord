@@ -78,11 +78,12 @@ export function buildSpawnEmbed(event: SpawnEvent, time: number, location: strin
     fields.push({ name: "Location", value: plain(location), inline: false });
   }
   return {
-    title: `${name} spotted!`,
-    description: `**${plain(event.species)}** has appeared!`,
+    author: { name: event.legendary ? "Legendary sighting" : "Shiny sighting" },
+    title: `${event.legendary ? "👑" : "✨"} ${name} spotted!`,
+    description: `**${plain(event.species)}** has appeared${location?.startsWith("near ") ? ` ${plain(location)}` : ""}! Be the first to catch it.`,
     color: event.legendary ? COLORS.legendary : COLORS.shiny,
     fields,
-    footer: event.dexNumber ? { text: `Pokedex #${padDex(event.dexNumber)}` } : undefined,
+    footer: event.dexNumber ? { text: `Pokédex #${padDex(event.dexNumber)}` } : undefined,
     timestamp: new Date(time * 1000).toISOString(),
   };
 }
@@ -132,6 +133,7 @@ export class SpawnAnnouncer {
     const message = embedMessage(
       buildSpawnEmbed(event, envelope.time, describeLocation(event, this.options.config.locationMode)),
       this.options.artwork.resolve(event.dexNumber),
+      "image",
     );
     this.options.queue.enqueue(`spawn ${envelope.id}`, async () => {
       const channel = this.options.channels.get(decision.channel);

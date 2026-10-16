@@ -3,7 +3,7 @@ import type { OutgoingMessage } from "../../bot/ports.js";
 import type { GameApi } from "../../integrations/pokeverse/gameApi.js";
 import type { FoundPokemon } from "../../integrations/pokeverse/protocol.js";
 import { padDex, truncate } from "../../utils/format.js";
-import { COLORS, embedMessage, plain } from "../embeds.js";
+import { COLORS, capitalizeWords, embedMessage, plain, progressBar, typeColor } from "../embeds.js";
 import type { ArtworkResolver } from "./artwork.js";
 
 export function normalizePokemonQuery(input: string): string | undefined {
@@ -11,8 +11,13 @@ export function normalizePokemonQuery(input: string): string | undefined {
   return name.length >= 1 && name.length <= 40 && /^[\p{L}\p{N} .'\-:♀♂]+$/u.test(name) ? name : undefined;
 }
 
+/** Base stats above this fill the whole bar. */
+const STAT_BAR_MAX = 150;
+
 function statLine(label: string, value: number | null | undefined): string | undefined {
-  return value === null || value === undefined ? undefined : `${label}: **${value}**`;
+  return value === null || value === undefined
+    ? undefined
+    : `\`${progressBar(value, STAT_BAR_MAX, 8)}\` ${label}: **${value}**`;
 }
 
 function list(items: string[], max: number): string {
@@ -26,7 +31,7 @@ function list(items: string[], max: number): string {
 export function buildPokemonEmbed(pokemon: FoundPokemon): APIEmbed {
   const fields: NonNullable<APIEmbed["fields"]> = [];
   if (pokemon.types.length > 0) {
-    fields.push({ name: "Type", value: pokemon.types.map(plain).join(" / "), inline: true });
+    fields.push({ name: "Type", value: pokemon.types.map((type) => plain(capitalizeWords(type))).join(" / "), inline: true });
   }
   if (pokemon.generation) {
     fields.push({ name: "Generation", value: String(pokemon.generation), inline: true });
@@ -75,9 +80,10 @@ export function buildPokemonEmbed(pokemon: FoundPokemon): APIEmbed {
   }
 
   return {
+    author: { name: pokemon.legendary ? "Pokédex · Legendary" : pokemon.shiny ? "Pokédex · Shiny" : "Pokédex" },
     title: pokemon.dexNumber ? `#${padDex(pokemon.dexNumber)} ${plain(pokemon.name)}` : plain(pokemon.name),
-    description: pokemon.description ? truncate(plain(pokemon.description), 1000) : undefined,
-    color: pokemon.legendary ? COLORS.legendary : pokemon.shiny ? COLORS.shiny : COLORS.info,
+    description: pokemon.description ? `*${truncate(plain(pokemon.description), 1000)}*` : undefined,
+    color: pokemon.legendary ? COLORS.legendary : pokemon.shiny ? COLORS.shiny : (typeColor(pokemon.types) ?? COLORS.info),
     fields,
   };
 }

@@ -7,7 +7,7 @@ import { padDex } from "../../utils/format.js";
 import type { Logger } from "../../utils/logger.js";
 import type { Metrics } from "../../utils/metrics.js";
 import type { CatchMode } from "../../utils/stateStore.js";
-import { COLORS, capitalizeWords, embedMessage, plain, sexLabel } from "../embeds.js";
+import { COLORS, capitalizeWords, embedMessage, plain, sexLabel, sexSymbol } from "../embeds.js";
 import type { ArtworkResolver } from "../pokemon/artwork.js";
 
 export interface CatchAnnouncerOptions {
@@ -52,33 +52,41 @@ export function pokemonDisplayName(species: string, extraPoints: number | null |
   return extraPoints !== null && extraPoints !== undefined && extraPoints > 0 ? `${species} +${extraPoints}` : species;
 }
 
+function withArticle(text: string): string {
+  return `${/^[aeiou]/i.test(text) ? "an" : "a"} ${text}`;
+}
+
+/** Shiny and legendary catches show their artwork large, the others as a thumbnail. */
+export function catchArtworkPlacement(event: CatchEvent): "image" | "thumbnail" {
+  return event.shiny || event.legendary ? "image" : "thumbnail";
+}
+
 export function buildCatchEmbed(event: CatchEvent, time: number): APIEmbed {
   const name = pokemonDisplayName(event.species, event.extraPoints);
   const tags = [
     event.legendary ? "Legendary" : undefined,
     event.shiny && !/^shiny\b/i.test(event.species) ? "Shiny" : undefined,
   ].filter(Boolean);
+  const icon = event.legendary ? "👑 " : event.shiny ? "✨ " : "";
+  const ball = event.ball ? plain(capitalizeWords(event.ball)) : undefined;
   const fields: NonNullable<APIEmbed["fields"]> = [
     { name: "Trainer", value: plain(event.trainer), inline: true },
-    { name: "Pokemon", value: plain(name), inline: true },
     { name: "Level", value: String(event.level), inline: true },
   ];
   const sex = sexLabel(event.sex);
   if (sex) {
-    fields.push({ name: "Sex", value: sex, inline: true });
+    fields.push({ name: "Sex", value: `${sex}${sexSymbol(event.sex)}`, inline: true });
   }
-  if (event.ball) {
-    fields.push({ name: "Ball", value: plain(capitalizeWords(event.ball)), inline: true });
-  }
-  if (event.safari) {
-    fields.push({ name: "Area", value: "Safari Zone", inline: true });
+  if (ball) {
+    fields.push({ name: "Ball", value: ball, inline: true });
   }
   return {
-    title: `${tags.length > 0 ? `${tags.join(" ")} ` : ""}${name} caught!`,
-    description: `**${plain(event.trainer)}** caught **${plain(name)}**.`,
+    author: { name: event.safari ? "Safari Zone catch" : "New catch" },
+    title: `${icon}${tags.length > 0 ? `${tags.join(" ")} ` : ""}${name} caught!`,
+    description: `**${plain(event.trainer)}** caught ${event.legendary || event.shiny ? "the" : /^[aeiou]/i.test(name) ? "an" : "a"} **${plain(name)}**${ball ? ` with ${withArticle(ball)}` : ""}!`,
     color: event.legendary ? COLORS.legendary : event.shiny ? COLORS.shiny : COLORS.success,
     fields,
-    footer: event.dexNumber ? { text: `Pokedex #${padDex(event.dexNumber)}` } : undefined,
+    footer: event.dexNumber ? { text: `Pokédex #${padDex(event.dexNumber)}` } : undefined,
     timestamp: new Date(time * 1000).toISOString(),
   };
 }
@@ -119,6 +127,7 @@ export class CatchAnnouncer {
     const message = embedMessage(
       buildCatchEmbed(envelope.event, envelope.time),
       this.options.artwork.resolve(envelope.event.dexNumber),
+      catchArtworkPlacement(envelope.event),
     );
     this.options.queue.enqueue(`catch ${envelope.id}`, async () => {
       const channel = this.options.channels.get("catches");

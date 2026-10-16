@@ -40,8 +40,8 @@ describe("spawn alerts", () => {
     expect(announcer.handle(envelope(SHINY))).toEqual({ action: "announce", channel: "shinySpawns" });
     expect(announcer.handle(envelope(LEGENDARY))).toEqual({ action: "announce", channel: "legendarySpawns" });
     await queue.idle();
-    expect(channels.channel("shinySpawns").sent[0]!.message.embeds![0]!.title).toBe("Shiny Rattata spotted!");
-    expect(channels.channel("legendarySpawns").sent[0]!.message.embeds![0]!.title).toBe("Legendary Mewtwo spotted!");
+    expect(channels.channel("shinySpawns").sent[0]!.message.embeds![0]!.title).toBe("✨ Shiny Rattata spotted!");
+    expect(channels.channel("legendarySpawns").sent[0]!.message.embeds![0]!.title).toBe("👑 Legendary Mewtwo spotted!");
   });
 
   it("announces a shiny legendary exactly once", async () => {
@@ -50,7 +50,7 @@ describe("spawn alerts", () => {
     await queue.idle();
     expect(channels.channel("legendarySpawns").sent).toHaveLength(1);
     expect(channels.channel("shinySpawns").sent).toHaveLength(0);
-    expect(channels.channel("legendarySpawns").sent[0]!.message.embeds![0]!.title).toBe("Legendary Shiny Mewtwo spotted!");
+    expect(channels.channel("legendarySpawns").sent[0]!.message.embeds![0]!.title).toBe("👑 Legendary Shiny Mewtwo spotted!");
 
     const shinyRoute = setup({ SPAWN_SHINY_LEGENDARY_ROUTE: "shiny" });
     expect(routeSpawn(SHINY_LEGENDARY, shinyRoute.config.spawns)).toBe("shinySpawns");

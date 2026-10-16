@@ -50,16 +50,16 @@ describe("catch announcements", () => {
     await queue.idle();
     const embed = channel.sent[0]!.message.embeds![0]!;
     expect(embed.title).toBe("Rattata caught!");
-    expect(embed.description).toBe("**Bridge Trainer** caught **Rattata**.");
+    expect(embed.description).toBe("**Bridge Trainer** caught a **Rattata** with an Ultra Ball!");
     expect(embed.fields).toEqual(
       expect.arrayContaining([
         { name: "Trainer", value: "Bridge Trainer", inline: true },
         { name: "Level", value: "5", inline: true },
-        { name: "Sex", value: "Male", inline: true },
+        { name: "Sex", value: "Male ♂", inline: true },
         { name: "Ball", value: "Ultra Ball", inline: true },
       ]),
     );
-    expect(embed.footer?.text).toBe("Pokedex #019");
+    expect(embed.footer?.text).toBe("Pokédex #019");
   });
 
   it("shows the bonus only when the game reports one", () => {
@@ -98,10 +98,11 @@ describe("catch announcements", () => {
 
   it("styles shiny and legendary catches", () => {
     const shiny = buildCatchEmbed({ ...RATTATA, species: "Shiny Rattata", shiny: true }, 0);
-    expect(shiny.title).toBe("Shiny Rattata caught!");
+    expect(shiny.title).toBe("✨ Shiny Rattata caught!");
+    expect(shiny.description).toBe("**Bridge Trainer** caught the **Shiny Rattata** with an Ultra Ball!");
     expect(shiny.color).toBe(0xfacc15);
     const legendary = buildCatchEmbed({ ...RATTATA, species: "Mewtwo", legendary: true, sex: 2 }, 0);
-    expect(legendary.title).toBe("Legendary Mewtwo caught!");
+    expect(legendary.title).toBe("👑 Legendary Mewtwo caught!");
     expect(legendary.fields?.some((field) => field.name === "Sex")).toBe(false);
   });
 
@@ -117,6 +118,10 @@ describe("catch announcements", () => {
     expect(first!.message.files).toEqual([{ name: "pokemon-19.png", path: join(dir, "19.png") }]);
     expect(first!.message.embeds![0]!.thumbnail).toEqual({ url: "attachment://pokemon-19.png" });
     expect(second!.message.files).toBeUndefined();
+
+    withArt.announcer.handle(envelope({ ...RATTATA, species: "Shiny Rattata", shiny: true }));
+    await withArt.queue.idle();
+    expect(withArt.channel.sent[2]!.message.embeds![0]!.image).toEqual({ url: "attachment://pokemon-19.png" });
 
     const noArt = setup("all");
     noArt.announcer.handle(envelope(RATTATA));
