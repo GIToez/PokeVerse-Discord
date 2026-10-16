@@ -179,6 +179,31 @@ export interface GameEventEnvelope<E extends GameEvent = GameEvent> {
 
 // Request results -------------------------------------------------------------
 
+const cardPokemonSchema = z.object({
+  name: z.string(),
+  level: z.number(),
+  sex: z.string().nullish(),
+  number: z.number().nullish(),
+  shiny: z.boolean().nullish(),
+  types: z.array(z.string()).optional(),
+});
+
+export const trainerCardSchema = z.object({
+  title: z.string(),
+  about: z.string().optional(),
+  since: z.number().optional(),
+  vocation: z
+    .object({ key: z.string(), name: z.string(), rank: z.number(), maxRank: z.number(), title: z.string().nullish() })
+    .optional(),
+  favorite: cardPokemonSchema.optional(),
+  trophies: z.array(cardPokemonSchema).optional(),
+  playTime: z.number().optional(),
+  dex: z.object({ seen: z.number(), total: z.number() }).optional(),
+  badges: z.array(z.object({ region: z.string(), earned: z.array(z.string()), total: z.number() })).optional(),
+  /** What the trainer's privacy settings keep off their card: playTime, stats, trophies. */
+  hidden: z.array(z.string()).optional(),
+});
+
 export const trainerResultSchema = z.union([
   z.object({ found: z.literal(false) }),
   z.object({
@@ -196,6 +221,9 @@ export const trainerResultSchema = z.union([
     playersDefeated: z.number(),
     tournamentsWon: z.number(),
     achievements: z.object({ earned: z.number(), total: z.number(), recent: z.array(z.string()) }),
+    mastery: z.string().nullish(),
+    /** The Trainer Card; game servers from before it leave it out. */
+    card: trainerCardSchema.optional(),
   }),
 ]);
 
@@ -301,5 +329,7 @@ export type TrainerResult = z.infer<typeof trainerResultSchema>;
 export type PokemonResult = z.infer<typeof pokemonResultSchema>;
 export type FoundPokemon = Extract<PokemonResult, { found: true }>;
 export type FoundTrainer = Extract<TrainerResult, { found: true }>;
+export type TrainerCard = z.infer<typeof trainerCardSchema>;
+export type CardPokemon = z.infer<typeof cardPokemonSchema>;
 export type ServerStatusResult = z.infer<typeof serverStatusResultSchema>;
 export type BridgeConfigResult = z.infer<typeof bridgeConfigResultSchema>;

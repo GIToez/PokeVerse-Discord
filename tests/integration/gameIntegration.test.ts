@@ -111,7 +111,7 @@ describe("bot <-> game bridge pipeline", () => {
     const { integration } = await setup();
     const user = { id: "1", displayName: "U", roleIds: [], manageGuild: false };
     const trainer = await integration.commands.handle({ commandName: "trainer", options: { name: "Red Trainer" }, user, guildId: DEV_GUILD });
-    expect(trainer.message.embeds![0]!.title).toBe("Trainer Red Trainer");
+    expect(trainer.message.embeds![0]!.title).toBe("Red Trainer");
     const pokemon = await integration.commands.handle({ commandName: "pokemon", options: { name: "Rattata" }, user, guildId: DEV_GUILD });
     expect(pokemon.message.embeds![0]!.title).toBe("#019 Rattata");
     expect(await integration.commands.autocomplete("pokemon", "name", "ra")).toHaveLength(2);

@@ -16,7 +16,7 @@ import { Metrics } from "../../src/utils/metrics.js";
 import { LinkCommands } from "../../src/commands/linkCommands.js";
 import { isPrivateCommand } from "../../src/commands/router.js";
 import { LinkService, type LinkChange } from "../../src/services/linking/linkService.js";
-import { DEV_GUILD, FakeChannels, FakeGame, FakeGuild, FakeLinkApi, LINKED_USER, makeConfig, makeStore, tempDir } from "../helpers/fakes.js";
+import { DEV_GUILD, FakeChannels, FakeGame, FakeGuild, FakeLinkApi, LINKED_USER, makeConfig, makeStore, TRAINER, tempDir } from "../helpers/fakes.js";
 
 const ADMIN = "700000000000000001";
 const MEMBER = "700000000000000002";
@@ -83,13 +83,67 @@ describe("/trainer", () => {
     const response = await run("trainer", { name: "  Red   Trainer " });
     expect(response.ephemeral).toBe(false);
     const embed = response.message.embeds![0]!;
-    expect(embed.title).toBe("Trainer Red Trainer");
+    expect(embed.title).toBe("Red Trainer");
+    expect(embed.author?.name).toBe("Trainer Card · 🟢 Online");
     const fields = Object.fromEntries(embed.fields!.map((field) => [field.name, field.value]));
-    expect(fields).toMatchObject({ Level: "25", Status: "Online", Vocation: "Trainer", Guild: "None" });
-    expect(fields.Collection).toContain("Caught: **12**");
-    expect(fields.PvP).toContain("Duels won: **3**");
-    expect(fields.Achievements).toBe("2 / 40\n- First Catch\n- Explorer");
+    expect(fields).toMatchObject({ Level: "**25**", Vocation: "Trainer", Guild: "None" });
+    expect(fields.Collection).toContain("Caught **12**");
+    expect(fields.Battles).toContain("Duels **3** won");
+    expect(fields.Achievements).toBe("`▰▱▱▱▱▱▱▱▱▱` 2 / 40\n🏅 First Catch\n🏅 Explorer");
+    expect(fields.Badges).toBeUndefined();
     expect(game.calls).toEqual(["trainer.lookup"]);
+  });
+
+  it("shows the Trainer Card with the chosen vocation, badges and the favorite's artwork", async () => {
+    const dir = tempDir();
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(join(dir, "25.png"), "png");
+    const { run, game } = setup({}, dir);
+    game.trainers.set("red trainer", {
+      ...TRAINER,
+      online: false,
+      vocation: "Ranger",
+      mastery: "Blaze Starter",
+      card: {
+        title: "Field Ranger",
+        about: "Tracking legends\nacross Kanto.",
+        since: 1760000000,
+        vocation: { key: "ranger", name: "Ranger", rank: 3, maxRank: 5, title: "Area Ranger" },
+        favorite: { name: "Pikachu", level: 25, sex: "male", number: 25 },
+        trophies: [{ name: "Shiny Gyarados", level: 45, sex: "female", number: 130, shiny: true }],
+        playTime: 93784,
+        dex: { seen: 40, total: 386 },
+        badges: [{ region: "Kanto", earned: ["Boulder", "Cascade"], total: 8 }],
+        hidden: [],
+      },
+    });
+    const response = await run("trainer", { name: "Red Trainer" });
+    const embed = response.message.embeds![0]!;
+    expect(embed.author?.name).toBe("Trainer Card · ⚫ Offline");
+    expect(embed.description).toBe("***Field Ranger***\n> Tracking legends\n> across Kanto.");
+    expect(embed.color).toBe(0x16a34a);
+    expect(embed.thumbnail).toEqual({ url: "attachment://pokemon-25.png" });
+    expect(embed.footer?.text).toBe("Played 1d 2h 3m · Trainer since");
+    expect(embed.timestamp).toBe(new Date(1760000000 * 1000).toISOString());
+    const fields = Object.fromEntries(embed.fields!.map((field) => [field.name, field.value]));
+    expect(fields.Vocation).toBe("🧭 Ranger\n★★★☆☆ Area Ranger\nMastery: Blaze Starter");
+    expect(fields.Badges).toBe("Kanto\n`▰▰▱▱▱▱▱▱` 2 / 8");
+    expect(fields.Collection).toContain("Pokédex `▰▱▱▱▱▱▱▱▱▱` 40 / 386");
+    expect(fields.Favorite).toBe("**Pikachu** Lv 25 ♂");
+    expect(fields.Trophies).toBe("✨ **Shiny Gyarados** Lv 45 ♀");
+  });
+
+  it("keeps what the trainer made private off the card", async () => {
+    const { run, game } = setup();
+    game.trainers.set("red trainer", {
+      ...TRAINER,
+      card: { title: "Pokemon Trainer", hidden: ["playTime", "stats", "trophies"], trophies: [] },
+    });
+    const embed = (await run("trainer", { name: "Red Trainer" })).message.embeds![0]!;
+    const fields = Object.fromEntries(embed.fields!.map((field) => [field.name, field.value]));
+    expect(fields.Collection).toBe("*Private*");
+    expect(fields.Trophies).toBe("*Private*");
+    expect(embed.footer).toBeUndefined();
   });
 
   it("handles not found, invalid names and an offline game", async () => {
@@ -124,7 +178,8 @@ describe("/pokemon", () => {
     expect(embed.thumbnail).toEqual({ url: "attachment://pokemon-19.png" });
     expect(response.message.files).toHaveLength(1);
     const fields = Object.fromEntries(embed.fields!.map((field) => [field.name, field.value]));
-    expect(fields.Type).toBe("normal");
+    expect(fields.Type).toBe("Normal");
+    expect(embed.color).toBe(0xa8a77a);
     expect(fields["Base stats"]).toContain("Attack: **56**");
     expect(fields["Base stats"]).not.toContain("Energy");
     expect(fields.Evolutions).toBe("Rattata -> Raticate (level 20)");

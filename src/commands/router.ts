@@ -182,7 +182,7 @@ export class CommandRouter {
     if (!this.options.game.connected) {
       return reply(OFFLINE_TEXT);
     }
-    const result = await lookupTrainer(this.options.game, input.options.name ?? "");
+    const result = await lookupTrainer(this.options.game, this.options.artwork, input.options.name ?? "");
     switch (result.kind) {
       case "invalid_name":
         return reply("Trainer names contain only letters, spaces, apostrophes and dashes (2-30 characters).");
