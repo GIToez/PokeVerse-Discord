@@ -62,6 +62,13 @@ describe("catch announcements", () => {
     expect(embed.footer?.text).toBe("Pokédex #019");
   });
 
+  it("names the ball in full when the game sends the short name", () => {
+    const embed = buildCatchEmbed({ ...RATTATA, ball: "ultra" }, 1_700_000_000);
+    expect(embed.description).toBe("**Bridge Trainer** caught a **Rattata** with an Ultra Ball!");
+    expect(embed.fields).toContainEqual({ name: "Ball", value: "Ultra", inline: true });
+    expect(buildCatchEmbed({ ...RATTATA, ball: "poke" }, 1_700_000_000).description).toMatch(/with a Poke Ball!$/);
+  });
+
   it("shows the bonus only when the game reports one", () => {
     expect(pokemonDisplayName("Rattata", 0)).toBe("Rattata");
     expect(pokemonDisplayName("Rattata", null)).toBe("Rattata");

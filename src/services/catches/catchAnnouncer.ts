@@ -52,6 +52,11 @@ export function pokemonDisplayName(species: string, extraPoints: number | null |
   return extraPoints !== null && extraPoints !== undefined && extraPoints > 0 ? `${species} +${extraPoints}` : species;
 }
 
+/** The game sends short ball names ("ultra"); the sentence needs "Ultra Ball". */
+function ballName(ball: string): string {
+  return /\bball$/i.test(ball) ? ball : `${ball} Ball`;
+}
+
 function withArticle(text: string): string {
   return `${/^[aeiou]/i.test(text) ? "an" : "a"} ${text}`;
 }
@@ -83,7 +88,7 @@ export function buildCatchEmbed(event: CatchEvent, time: number): APIEmbed {
   return {
     author: { name: event.safari ? "Safari Zone catch" : "New catch" },
     title: `${icon}${tags.length > 0 ? `${tags.join(" ")} ` : ""}${name} caught!`,
-    description: `**${plain(event.trainer)}** caught ${event.legendary || event.shiny ? "the" : /^[aeiou]/i.test(name) ? "an" : "a"} **${plain(name)}**${ball ? ` with ${withArticle(ball)}` : ""}!`,
+    description: `**${plain(event.trainer)}** caught ${event.legendary || event.shiny ? "the" : /^[aeiou]/i.test(name) ? "an" : "a"} **${plain(name)}**${ball ? ` with ${withArticle(ballName(ball))}` : ""}!`,
     color: event.legendary ? COLORS.legendary : event.shiny ? COLORS.shiny : COLORS.success,
     fields,
     footer: event.dexNumber ? { text: `Pokédex #${padDex(event.dexNumber)}` } : undefined,

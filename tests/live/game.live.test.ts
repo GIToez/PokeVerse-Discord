@@ -199,7 +199,7 @@ live("live: bot against the real PokeVerse game server", () => {
     const embed = embeds("catches")[0]!;
     console.log("[live] catch embed:", JSON.stringify(embed));
     expect(embed.title).toBe("Rattata caught!");
-    expect(embed.description).toMatch(new RegExp(`^\\*\\*${TRAINER.character}\\*\\* caught a \\*\\*Rattata\\*\\* with an? .+!$`));
+    expect(embed.description).toMatch(new RegExp(`^\\*\\*${TRAINER.character}\\*\\* caught a \\*\\*Rattata\\*\\* with an? .+ Ball!$`));
     expect(embed.footer?.text).toBe("Pokédex #019");
     await sleep(2000);
     expect(channels.channel("catches").sent).toHaveLength(1);
