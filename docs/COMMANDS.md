@@ -9,9 +9,15 @@ reply privately.
 
 ### `/trainer name:<character>`
 
-Public profile from the game: level, class, guild, online state, Pokemon caught (total,
-unique, shiny), duel wins/losses, players defeated, tournaments won and achievements
-(count plus up to 5 recent, never secret ones).
+The trainer's Trainer Card from the game: the displayed title and About text, level, the
+chosen vocation with its rank (and mastery), guild, online state, badges per region,
+Pokédex progress, Pokemon caught (total, unique, shiny), duels, players defeated,
+tournaments won, the favorite Pokemon (its artwork is the thumbnail), trophy Pokemon, play
+time, "Trainer since" and achievements (count plus up to 5 recent, never secret ones). The
+color is the vocation's.
+
+- What the trainer made private on their card (play time, statistics, trophies) is left out.
+- Game servers from before the Trainer Card only send the profile without the card fields.
 
 - Only existing, non-deleted characters of this world. Staff characters are reported as
   "not found".

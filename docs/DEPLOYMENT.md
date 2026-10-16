@@ -54,6 +54,9 @@ any token: the packaging script fails if it finds one.
 
    Set `DISCORD_TOKEN`, `DISCORD_APPLICATION_ID`, `DISCORD_GUILD_ID`, admin IDs,
    `BRIDGE_SECRET`, `POKEMON_ARTWORK_DIR` and `POKEVERSE_CONFIRM_PRODUCTION=yes`.
+   Packages built with `PV_ARTWORK_DIR=<game>/core/client-legacy/data/images/pictures`
+   carry the pictures in `artwork/`, and the game's deployment then sets
+   `POKEMON_ARTWORK_DIR=artwork` by itself.
 
 4. Game side: in `config.local.lua` next to the server's `config.lua` (mode 600, owned by
    the game user):
