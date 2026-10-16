@@ -130,11 +130,11 @@ live("live: bot against the real PokeVerse game server", () => {
   it("/trainer shows real data, hides staff and handles unknown names", async () => {
     const found = await integration.commands.handle(command("trainer", { name: TRAINER.character }));
     const embed = found.message.embeds![0]!;
-    expect(embed.title).toBe(`Trainer ${TRAINER.character}`);
+    expect(embed.title).toBe(TRAINER.character);
+    expect(embed.author?.name).toBe("Trainer Card · 🟢 Online");
     const fields = Object.fromEntries(embed.fields!.map((field) => [field.name, field.value]));
-    expect(fields.Status).toBe("Online");
-    expect(Number(fields.Level)).toBeGreaterThanOrEqual(1);
-    expect(fields.PvP).toContain("Duels won: **0**");
+    expect(Number(/\d+/.exec(fields.Level ?? "")?.[0])).toBeGreaterThanOrEqual(1);
+    expect(fields.Battles).toContain("Duels **0** won");
     console.log("[live] /trainer fields:", JSON.stringify(fields));
 
     const staff = await integration.commands.handle(command("trainer", { name: STAFF.character }));
@@ -199,20 +199,20 @@ live("live: bot against the real PokeVerse game server", () => {
     const embed = embeds("catches")[0]!;
     console.log("[live] catch embed:", JSON.stringify(embed));
     expect(embed.title).toBe("Rattata caught!");
-    expect(embed.description).toBe(`**${TRAINER.character}** caught **Rattata**.`);
-    expect(embed.footer?.text).toBe("Pokedex #019");
+    expect(embed.description).toMatch(new RegExp(`^\\*\\*${TRAINER.character}\\*\\* caught a \\*\\*Rattata\\*\\* with an? .+!$`));
+    expect(embed.footer?.text).toBe("Pokédex #019");
     await sleep(2000);
     expect(channels.channel("catches").sent).toHaveLength(1);
   });
 
   it("alerts shiny and legendary spawns from real spawn hooks, once each", async () => {
     await actor.call("say", { player: "trainer", text: "/bridgetest spawn Shiny Rattata" });
-    await waitFor(() => channels.channel("shinySpawns").sent.some((item) => item.message.embeds?.[0]?.title === "Shiny Rattata spotted!"), 10_000, "shiny alert");
+    await waitFor(() => channels.channel("shinySpawns").sent.some((item) => item.message.embeds?.[0]?.title === "✨ Shiny Rattata spotted!"), 10_000, "shiny alert");
     await actor.call("say", { player: "trainer", text: "/bridgetest spawn Mewtwo" });
     await waitFor(() => channels.channel("legendarySpawns").sent.length === 1, 10_000, "legendary alert");
     const legendary = embeds("legendarySpawns")[0]!;
     console.log("[live] legendary embed:", JSON.stringify(legendary));
-    expect(legendary.title).toBe("Legendary Mewtwo spotted!");
+    expect(legendary.title).toBe("👑 Legendary Mewtwo spotted!");
     expect(legendary.fields!.find((field) => field.name === "Source")!.value).toBe("Event");
     expect(legendary.fields!.find((field) => field.name === "Location")!.value).toMatch(/\d+, \d+, \d+/);
 
