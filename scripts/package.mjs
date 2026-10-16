@@ -239,6 +239,19 @@ async function main() {
     join(stage, "VERSION.json"),
     JSON.stringify({ name: pkg.name, version: pkg.version, profile: layout.profile, commit: gitCommit(), node: nodeVersion, builtAt: new Date().toISOString() }, null, 2) + "\n",
   );
+  // PV_ARTWORK_DIR: the game's Pokedex pictures (<dex>.png), shipped as artwork/ for POKEMON_ARTWORK_DIR
+  const artwork = process.env.PV_ARTWORK_DIR;
+  if (artwork) {
+    const pictures = readdirSync(artwork).filter((file) => /^\d+\.png$/.test(file));
+    if (pictures.length === 0) {
+      throw new Error(`PV_ARTWORK_DIR has no <dex>.png pictures: ${artwork}`);
+    }
+    mkdirSync(join(stage, "artwork"));
+    for (const file of pictures) {
+      cpSync(join(artwork, file), join(stage, "artwork", file));
+    }
+    log(`Added ${pictures.length} Pokemon pictures`);
+  }
   if (!skipNode) {
     await addNodeRuntime();
   }
