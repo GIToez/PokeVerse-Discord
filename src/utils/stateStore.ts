@@ -45,8 +45,8 @@ const stateSchema = z.object({
   lastBootId: z.string().optional(),
   lastRestartAt: z.number().optional(),
   adminCategoryId: z.string().optional(),
-  /** Linking roles created or adopted by setup. */
-  roles: z.object({ verified: z.string().optional(), premium: z.string().optional() }).default({}),
+  /** Linking roles created or adopted by setup: `verified`, `premium`, `staff:<group id>`. */
+  roles: z.record(z.string()).default({}),
   /**
    * Members the bot gave a linking role or nickname, so they can be cleaned up after an
    * unlink without the privileged members intent. Value: the nickname the bot set, or "".

@@ -122,6 +122,23 @@ export const envSchema = z.object({
   PREMIUM_ROLE_ENABLED: bool(true),
   PREMIUM_ROLE_NAME: z.string().trim().min(1).max(100).default("Ace Trainer"),
   NICKNAME_SYNC: bool(true),
+  STAFF_ROLES_ENABLED: bool(true),
+  STAFF_ROLE_NAMES: z
+    .string()
+    .default("2=Tutor,3=Senior Tutor,4=Gamemaster,5=Community Manager,6=God")
+    .transform((value, context) => {
+      const roles: Array<{ groupId: number; name: string }> = [];
+      for (const item of value.split(",").map((part) => part.trim()).filter(Boolean)) {
+        const match = /^(\d{1,3})\s*=\s*(.{1,100})$/.exec(item);
+        const groupId = match ? Number(match[1]) : NaN;
+        if (!match || groupId < 2 || roles.some((role) => role.groupId === groupId || role.name === match[2]!.trim())) {
+          context.addIssue({ code: z.ZodIssueCode.custom, message: `expected "<group id 2 or higher>=<role name>" pairs with unique ids and names, got "${item}"` });
+          return z.NEVER;
+        }
+        roles.push({ groupId, name: match[2]!.trim() });
+      }
+      return roles.sort((a, b) => a.groupId - b.groupId);
+    }),
   LINK_RESYNC_MINUTES: int(15, 0, 1440),
   DISCORD_MEMBERS_INTENT: bool(false),
 

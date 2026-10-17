@@ -153,6 +153,7 @@ export class GameIntegration {
         roles: [
           { key: "verified", name: config.linking.verifiedRoleName },
           ...(config.linking.premiumRoleEnabled ? [{ key: "premium" as const, name: config.linking.premiumRoleName }] : []),
+          ...config.linking.staffRoles.map(({ groupId, name }) => ({ key: `staff:${groupId}` as const, name })),
         ],
       },
     });

@@ -298,6 +298,7 @@ export class DiscordGuildPort implements GuildPort {
       name: role.name,
       managed: role.managed,
       assignable: !role.managed && me !== null && me.roles.highest.comparePositionTo(role) > 0,
+      administrator: role.permissions.has(PermissionFlagsBits.Administrator),
     };
   }
 

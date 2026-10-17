@@ -83,6 +83,7 @@ export interface RoleInfo {
   managed: boolean;
   /** The bot's highest role is above this role, so the bot can assign it. */
   assignable: boolean;
+  administrator: boolean;
 }
 
 export interface MemberInfo {

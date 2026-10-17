@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { LinkCommands } from "../../src/commands/linkCommands.js";
 import type { CommandInput } from "../../src/commands/router.js";
+import { linkSummarySchema } from "../../src/integrations/pokeverse/protocol.js";
 import { LinkService, type LinkChange } from "../../src/services/linking/linkService.js";
 import { silentLogger } from "../../src/utils/logger.js";
 import { Metrics } from "../../src/utils/metrics.js";
@@ -15,6 +16,7 @@ import {
 } from "../helpers/fakes.js";
 
 const OTHER = "223456789012345678";
+const STAFF_ROLES = [{ groupId: 2, name: "Tutor" }, { groupId: 4, name: "Gamemaster" }, { groupId: 6, name: "God" }];
 
 function setup(config: Partial<ConstructorParameters<typeof LinkService>[0]["config"]> = {}) {
   const guild = new FakeGuild();
@@ -24,12 +26,20 @@ function setup(config: Partial<ConstructorParameters<typeof LinkService>[0]["con
   const verified = guild.addRoleInfo({ name: "Verified Trainer" });
   const premium = guild.addRoleInfo({ name: "Ace Trainer" });
   const unrelated = guild.addRoleInfo({ name: "Event Winner" });
+  const tutor = guild.addRoleInfo({ name: "Tutor" });
+  const gamemaster = guild.addRoleInfo({ name: "Gamemaster" });
+  const god = guild.addRoleInfo({ name: "God" });
   store.update((state) => {
-    state.roles = { verified: verified.id, premium: premium.id };
+    state.roles = { verified: verified.id, premium: premium.id, "staff:2": tutor.id, "staff:4": gamemaster.id, "staff:6": god.id };
   });
   const changes: LinkChange[] = [];
   const service = new LinkService({
-    config: { verifiedRoleName: "Verified Trainer", premiumRoleEnabled: true, premiumRoleName: "Ace Trainer", nicknameSync: true, resyncMinutes: 0, ...config },
+    config: { verifiedRoleName: "Verified Trainer", premiumRoleEnabled: true, premiumRoleName: "Ace Trainer",
+      staffRoles: STAFF_ROLES,
+      nicknameSync: true,
+      resyncMinutes: 0,
+      ...config,
+    },
     links,
     guild: () => guild,
     store,
@@ -58,7 +68,7 @@ function setup(config: Partial<ConstructorParameters<typeof LinkService>[0]["con
     commands.handleComponent({ customId, guildId: DEV_GUILD, user: { id: userId, displayName: "Member", roleIds: [], manageGuild: false } });
   const text = (response: Awaited<ReturnType<typeof run>>) => response.message.content ?? response.message.embeds?.[0]?.description ?? "";
   return {
-    guild, store, links, metrics, service, commands, member, run, press, text, verified, premium, unrelated, changes,
+    guild, store, links, metrics, service, commands, member, run, press, text, verified, premium, unrelated, tutor, gamemaster, god, changes,
     advance: (ms: number) => {
       now += ms;
     },
@@ -89,6 +99,57 @@ describe("link service", () => {
     member.roleIds.push(premium.id);
     await service.sync(LINKED_USER, linkSummary({ premium: false }));
     expect(member.roleIds).toContain(premium.id);
+  });
+
+  it("gives the role of the highest staff group among the account's characters", async () => {
+    const { service, member, tutor, gamemaster, god } = setup();
+    const first = await service.sync(LINKED_USER, linkSummary({ groupIds: [1, 2] }));
+    expect(first.added).toEqual(["Verified Trainer", "Tutor"]);
+    expect(member.roleIds).toContain(tutor.id);
+    // Promotion: the old staff role goes, the new one comes; no group without a role counts.
+    const promoted = await service.sync(LINKED_USER, linkSummary({ groupIds: [1, 2, 4, 5] }));
+    expect(promoted).toMatchObject({ added: ["Gamemaster"], removed: ["Tutor"], problems: [] });
+    expect(member.roleIds).toContain(gamemaster.id);
+    expect(member.roleIds).not.toContain(tutor.id);
+    // Demotion back to a player: every staff role goes, Verified Trainer stays.
+    const demoted = await service.sync(LINKED_USER, linkSummary({ groupIds: [1] }));
+    expect(demoted.removed).toEqual(["Gamemaster"]);
+    expect(member.roleIds.filter((id) => [tutor.id, gamemaster.id, god.id].includes(id))).toEqual([]);
+  });
+
+  it("removes staff roles on unlink, and given by hand to a non-staff account", async () => {
+    const { service, member, tutor, god } = setup();
+    member.roleIds.push(god.id);
+    expect((await service.sync(LINKED_USER, linkSummary({ groupIds: [2] }))).removed).toEqual(["God"]);
+    expect(member.roleIds).toContain(tutor.id);
+    expect((await service.sync(LINKED_USER, undefined)).removed).toEqual(["Verified Trainer", "Tutor"]);
+  });
+
+  it("reads groupIds from the game, including an empty list encoded as {}", () => {
+    const { groupIds: _, ...plain } = linkSummary();
+    expect(linkSummarySchema.parse({ ...plain, groupIds: [1, 4] }).groupIds).toEqual([1, 4]);
+    expect(linkSummarySchema.parse({ ...plain, groupIds: {} }).groupIds).toEqual([]);
+    expect(linkSummarySchema.parse(plain).groupIds).toBeUndefined();
+    expect(() => linkSummarySchema.parse({ ...plain, groupIds: { a: 1 } })).toThrow();
+  });
+
+  it("leaves staff roles alone when the game does not send groups, or staff roles are off", async () => {
+    const old = setup();
+    old.member.roleIds.push(old.god.id);
+    await old.service.sync(LINKED_USER, linkSummary());
+    expect(old.member.roleIds).toContain(old.god.id);
+    const off = setup({ staffRoles: [] });
+    off.member.roleIds.push(off.god.id);
+    await off.service.sync(LINKED_USER, linkSummary({ groupIds: [1] }));
+    expect(off.member.roleIds).toContain(off.god.id);
+  });
+
+  it("never gives a role that has Administrator", async () => {
+    const { service, member, guild, god } = setup();
+    guild.roles.find((role) => role.id === god.id)!.administrator = true;
+    const result = await service.sync(LINKED_USER, linkSummary({ groupIds: [6] }));
+    expect(member.roleIds).not.toContain(god.id);
+    expect(result.problems).toEqual(['The "God" role has Administrator, so the bot will not give it out.']);
   });
 
   it("is idempotent: a second sync makes no Discord calls", async () => {

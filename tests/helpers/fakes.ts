@@ -323,7 +323,7 @@ export class FakeGuild implements GuildPort {
   }
 
   async listRoles(): Promise<RoleInfo[]> {
-    return this.roles.map(({ id, name, managed, assignable }) => ({ id, name, managed, assignable }));
+    return this.roles.map(({ id, name, managed, assignable, administrator }) => ({ id, name, managed, assignable, administrator }));
   }
 
   async createRole(name: string): Promise<RoleInfo> {
@@ -331,7 +331,7 @@ export class FakeGuild implements GuildPort {
       throw new Error("Missing Permissions");
     }
     const role = this.addRoleInfo({ name });
-    return { id: role.id, name: role.name, managed: role.managed, assignable: role.assignable };
+    return { id: role.id, name: role.name, managed: role.managed, assignable: role.assignable, administrator: role.administrator };
   }
 
   async fetchMember(userId: string): Promise<MemberInfo | undefined> {
@@ -370,9 +370,7 @@ export class FakeGuild implements GuildPort {
   }
 }
 
-export interface FakeRole extends RoleInfo {
-  administrator: boolean;
-}
+export type FakeRole = RoleInfo;
 
 export type FakeMember = MemberInfo;
 

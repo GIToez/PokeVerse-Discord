@@ -142,6 +142,13 @@ describe("activity log and linking configuration", () => {
       verifiedRoleName: "Verified Trainer",
       premiumRoleEnabled: true,
       premiumRoleName: "Ace Trainer",
+      staffRoles: [
+        { groupId: 2, name: "Tutor" },
+        { groupId: 3, name: "Senior Tutor" },
+        { groupId: 4, name: "Gamemaster" },
+        { groupId: 5, name: "Community Manager" },
+        { groupId: 6, name: "God" },
+      ],
       nicknameSync: true,
       resyncMinutes: 15,
       membersIntent: false,
@@ -169,5 +176,15 @@ describe("activity log and linking configuration", () => {
     expect(custom.activity.geoipDatabase!.endsWith(join("geo", "GeoLite2-City.mmdb"))).toBe(true);
     expect(custom.linking.enabled).toBe(false);
     expect(describeConfig(custom)).toMatchObject({ linking: false });
+  });
+
+  it("parses and validates the staff group roles", () => {
+    const config = makeConfig({ STAFF_ROLE_NAMES: " 4 = Game Master , 2=Helper" });
+    expect(config.linking.staffRoles).toEqual([{ groupId: 2, name: "Helper" }, { groupId: 4, name: "Game Master" }]);
+    expect(describeConfig(config)).toMatchObject({ linking: { roles: ["Verified Trainer", "Ace Trainer", "Helper (game group 2)", "Game Master (game group 4)"] } });
+    expect(makeConfig({ STAFF_ROLES_ENABLED: "false" }).linking.staffRoles).toEqual([]);
+    for (const value of ["1=Player", "2=Tutor,2=Other", "2=Tutor,3=Tutor", "Tutor", "2="]) {
+      expect(problemsOf(() => makeConfig({ STAFF_ROLE_NAMES: value }))[0]).toMatch(/STAFF_ROLE_NAMES/);
+    }
   });
 });

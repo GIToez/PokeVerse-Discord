@@ -324,6 +324,12 @@ export const linkSummarySchema = z.object({
   premium: z.boolean(),
   premiumUnlimited: z.boolean(),
   premiumDays: z.number().optional(),
+  /**
+   * Distinct group ids of the account's characters (players.group_id, live for online ones).
+   * Absent from game servers older than staff roles. The game's JSON encoder writes an
+   * empty list as {}.
+   */
+  groupIds: z.union([z.array(z.number().int()), z.object({}).strict().transform((): number[] => [])]).optional(),
 });
 
 const notLinked = z.object({ linked: z.literal(false) });

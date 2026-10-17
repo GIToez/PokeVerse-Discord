@@ -11,6 +11,8 @@ export interface LinkServiceOptions {
     verifiedRoleName: string;
     premiumRoleEnabled: boolean;
     premiumRoleName: string;
+    /** Sorted by group id. */
+    staffRoles: Array<{ groupId: number; name: string }>;
     nicknameSync: boolean;
     resyncMinutes: number;
   };
@@ -66,9 +68,10 @@ function isMissingPermissions(error: unknown): boolean {
 
 /**
  * Keeps Discord in line with the game's account links: the Verified Trainer role for every
- * linked member, the Ace Trainer role while the account has premium time, and the nickname
- * set to the main character. Only these two roles are ever added or removed; every other role
- * and the global username are left alone. Syncs are idempotent and only call Discord for
+ * linked member, the Ace Trainer role while the account has premium time, the staff role of
+ * the highest in-game staff group among the account's characters (Tutor, Gamemaster, ...),
+ * and the nickname set to the main character. Only these roles are ever added or removed
+ * (never one with Administrator); every other role and the global username are left alone. Syncs are idempotent and only call Discord for
  * actual differences. A failed sync never touches the link itself (the game owns it).
  */
 export class LinkService {
@@ -129,6 +132,7 @@ export class LinkService {
     if (config.premiumRoleEnabled) {
       await this.setRole(guild, member, premium, config.premiumRoleName, link?.premium === true, result);
     }
+    await this.syncStaffRoles(guild, member, link, result);
     await this.syncNickname(guild, member, link, mode, result);
     // Keep tracking an unlinked member until their roles and nickname are cleaned up, so the
     // next resync retries.
@@ -209,6 +213,26 @@ export class LinkService {
     }
   }
 
+  /** The configured staff group the member should hold a role for; undefined = none. */
+  staffGroup(link: LinkSummary | undefined): number | undefined {
+    const groups = link?.groupIds ?? [];
+    return this.options.config.staffRoles.findLast((role) => groups.includes(role.groupId))?.groupId;
+  }
+
+  private async syncStaffRoles(guild: GuildPort, member: MemberInfo, link: LinkSummary | undefined, result: SyncResult): Promise<void> {
+    // A game server without staff groups in the link summary: leave staff roles alone.
+    if (link && link.groupIds === undefined) {
+      return;
+    }
+    const target = this.staffGroup(link);
+    const saved = this.options.store.get().roles;
+    // Removals first, so a promoted or demoted member never holds two staff roles.
+    const ordered = [...this.options.config.staffRoles].sort((a, b) => Number(a.groupId === target) - Number(b.groupId === target));
+    for (const { groupId, name } of ordered) {
+      await this.setRole(guild, member, saved[`staff:${groupId}`], name, groupId === target, result);
+    }
+  }
+
   private async setRole(
     guild: GuildPort,
     member: MemberInfo,
@@ -229,6 +253,15 @@ export class LinkService {
     }
     try {
       if (wanted) {
+        const role = (await guild.listRoles()).find((item) => item.id === roleId);
+        if (!role) {
+          result.problems.push(`The "${roleName}" role no longer exists (staff: run /pokeverse setup).`);
+          return;
+        }
+        if (role.administrator) {
+          result.problems.push(`The "${role.name}" role has Administrator, so the bot will not give it out.`);
+          return;
+        }
         await guild.addRole(member.id, roleId, REASON);
         result.added.push(roleName);
       } else {

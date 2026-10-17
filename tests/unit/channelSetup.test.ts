@@ -239,7 +239,15 @@ describe("private admin logs and linking roles", () => {
       activity: { enabled: true, viewerRoleIds: [VIEWER_ROLE], viewerUserIds: [] },
       adminRoleIds: [],
       adminUserIds: [ADMIN_USER],
-      linking: { enabled: true, roles: [{ key: "verified", name: "Verified Trainer" }, { key: "premium", name: "Ace Trainer" }] },
+      linking: {
+        enabled: true,
+        roles: [
+          { key: "verified", name: "Verified Trainer" },
+          { key: "premium", name: "Ace Trainer" },
+          { key: "staff:2", name: "Tutor" },
+          { key: "staff:4", name: "Gamemaster" },
+        ],
+      },
     });
     const guild = new FakeGuild();
     guild.permissions = [...guild.permissions, "ManageRoles", "ManageNicknames"];
@@ -264,16 +272,36 @@ describe("private admin logs and linking roles", () => {
       ]);
     }
     expect(report.channels.find((channel) => channel.purpose === "playerActivity")!.privacyProblems).toEqual([]);
-    expect(report.roles.map((role) => [role.name, role.action])).toEqual([["Verified Trainer", "created"], ["Ace Trainer", "created"]]);
-    expect(store.get().roles.verified).toBeDefined();
-    expect(store.get().roles.premium).toBeDefined();
+    expect(report.roles.map((role) => [role.name, role.action])).toEqual([
+      ["Verified Trainer", "created"], ["Ace Trainer", "created"], ["Tutor", "created"], ["Gamemaster", "created"],
+    ]);
+    expect(Object.keys(store.get().roles)).toEqual(["verified", "premium", "staff:2", "staff:4"]);
     const text = formatSetupReport(report);
     expect(text).toContain(`Private category "${ADMIN_CATEGORY_NAME}": created`);
     expect(text).toContain(`<#${activity.id}>: created (private)`);
 
     const again = await channelSetup.run(guild);
     expect(again.roles.every((role) => role.action === "kept")).toBe(true);
-    expect(guild.roles).toHaveLength(3);
+    expect(guild.roles).toHaveLength(5);
+  });
+
+  it("never adopts or keeps a role that has Administrator", async () => {
+    const { channelSetup, guild, store } = phase2();
+    const admin = guild.addRoleInfo({ name: "Gamemaster", administrator: true });
+    const report = await channelSetup.run(guild);
+    const gamemaster = report.roles.find((role) => role.key === "staff:4")!;
+    expect(gamemaster).toMatchObject({ action: "failed", roleId: undefined });
+    expect(store.get().roles["staff:4"]).toBeUndefined();
+    expect(report.ok).toBe(false);
+    expect(formatSetupReport(report)).toContain('Role "Gamemaster": FAILED (This role has Administrator');
+    // A saved role that later got Administrator is reported too.
+    const tutor = guild.roles.find((role) => role.id === store.get().roles["staff:2"])!;
+    tutor.administrator = true;
+    admin.administrator = false;
+    const again = await channelSetup.run(guild);
+    expect(again.roles.find((role) => role.key === "staff:2")).toMatchObject({ action: "failed", roleId: undefined });
+    expect(again.roles.find((role) => role.key === "staff:4")).toMatchObject({ action: "adopted", roleId: admin.id });
+    expect((await channelSetup.inspect(guild)).roles.find((role) => role.key === "staff:2")!.action).toBe("failed");
   });
 
   it("reports an adopted channel that is not private and Administrator roles", async () => {

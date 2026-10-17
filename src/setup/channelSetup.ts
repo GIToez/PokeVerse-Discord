@@ -29,7 +29,8 @@ export interface ChannelReport {
   administratorRoles?: string[];
 }
 
-export type RoleKey = "verified" | "premium";
+/** `staff:<id>`: the role for in-game group `<id>` (Tutor, Gamemaster, ...). */
+export type RoleKey = "verified" | "premium" | `staff:${number}`;
 
 export interface RoleReport {
   key: RoleKey;
@@ -400,6 +401,9 @@ export class ChannelSetup {
     const saved = this.store.get().roles;
     return this.options.linking.roles.map(({ key, name }) => {
       const role = roles.find((item) => item.id === saved[key]);
+      if (role?.administrator) {
+        return { key, name: role.name, roleId: undefined, action: "failed", assignable: false, error: "This role has Administrator; the bot never hands it out." };
+      }
       return { key, name: role?.name ?? name, roleId: role?.id, action: role ? "kept" : "skipped", assignable: role?.assignable ?? false };
     });
   }
@@ -440,6 +444,13 @@ export class ChannelSetup {
           action = "failed";
           error = "Missing Manage Roles permission.";
         }
+      }
+      if (role?.administrator) {
+        reports.push({
+          key, name: role.name, roleId: undefined, action: "failed", assignable: false,
+          error: "This role has Administrator; the bot never hands it out. Remove Administrator from it or rename it.",
+        });
+        continue;
       }
       if (role && action !== "kept") {
         const roleId = role.id;

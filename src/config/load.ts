@@ -64,6 +64,8 @@ export interface BotConfig {
     verifiedRoleName: string;
     premiumRoleEnabled: boolean;
     premiumRoleName: string;
+    /** In-game staff group id -> Discord role name; empty when staff roles are off. */
+    staffRoles: Array<{ groupId: number; name: string }>;
     nicknameSync: boolean;
     resyncMinutes: number;
     membersIntent: boolean;
@@ -247,6 +249,7 @@ export function loadConfig(options: LoadOptions): BotConfig {
       verifiedRoleName: raw.VERIFIED_ROLE_NAME,
       premiumRoleEnabled: raw.PREMIUM_ROLE_ENABLED,
       premiumRoleName: raw.PREMIUM_ROLE_NAME,
+      staffRoles: raw.STAFF_ROLES_ENABLED ? raw.STAFF_ROLE_NAMES : [],
       nicknameSync: raw.NICKNAME_SYNC,
       resyncMinutes: raw.LINK_RESYNC_MINUTES,
       membersIntent: raw.DISCORD_MEMBERS_INTENT,
@@ -282,7 +285,14 @@ export function describeConfig(config: BotConfig): Record<string, unknown> {
       ? { ip: config.activity.ipMode, retentionDays: config.activity.retentionDays, geoip: config.activity.geoipDatabase !== undefined }
       : false,
     linking: config.linking.enabled
-      ? { roles: [config.linking.verifiedRoleName, ...(config.linking.premiumRoleEnabled ? [config.linking.premiumRoleName] : [])], nicknameSync: config.linking.nicknameSync }
+      ? {
+          roles: [
+            config.linking.verifiedRoleName,
+            ...(config.linking.premiumRoleEnabled ? [config.linking.premiumRoleName] : []),
+            ...config.linking.staffRoles.map((role) => `${role.name} (game group ${role.groupId})`),
+          ],
+          nicknameSync: config.linking.nicknameSync,
+        }
       : false,
     autoSetup: config.autoSetup,
     artworkDir: config.artworkDir ?? null,

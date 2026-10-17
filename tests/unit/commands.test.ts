@@ -32,7 +32,7 @@ function setup(overrides: Record<string, string> = {}, artworkDir?: string, with
   const links = new FakeLinkApi();
   const linkChanges: LinkChange[] = [];
   const service = new LinkService({
-    config: { verifiedRoleName: "Verified Trainer", premiumRoleEnabled: true, premiumRoleName: "Ace Trainer", nicknameSync: true, resyncMinutes: 0 },
+    config: { verifiedRoleName: "Verified Trainer", premiumRoleEnabled: true, premiumRoleName: "Ace Trainer", staffRoles: [], nicknameSync: true, resyncMinutes: 0 },
     links,
     guild: () => guild,
     store,
