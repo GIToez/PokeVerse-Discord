@@ -38,7 +38,7 @@ node dist/bot.cjs invite          # or: configure-discord-dev.bat prints it
 ```
 
 The link uses the scopes `bot applications.commands` and exactly these permissions
-(integer `402770960`). **Administrator is not requested.**
+(integer `309640416272`). **Administrator is not requested.**
 
 | Permission | Why |
 | --- | --- |
@@ -50,13 +50,15 @@ The link uses the scopes `bot applications.commands` and exactly these permissio
 | Manage Channels | Create the "PokeVerse Integration" and private "Admin Logs" categories and their channels |
 | Manage Roles | Create the Verified Trainer and Ace Trainer roles and give/remove them on link changes |
 | Manage Nicknames | Set a linked member's server nickname to their main character |
+| Create Public Threads | One thread per wild legendary in `#legendary-spawns` |
+| Send Messages in Threads | Post the legendary's sightings and end in its thread |
 
 Manage Channels is only needed for automatic setup. If you prefer, create the channels
 yourself, assign them with `/pokeverse channel`, and remove the permission afterwards.
 Manage Roles and Manage Nicknames are only needed with account linking (`LINKING_ENABLED`).
 
-An already invited bot keeps its old permissions: add Manage Roles and Manage Nicknames to
-the bot's role (**Server Settings > Roles > PokeVerse**) or open the new invite link.
+An already invited bot keeps its old permissions: add Manage Roles, Manage Nicknames,
+Create Public Threads and Send Messages in Threads to the bot's role (**Server Settings > Roles > PokeVerse**) or open the new invite link.
 
 ### Role order
 

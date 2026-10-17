@@ -18,6 +18,22 @@ export type ChannelPurpose = (typeof CHANNEL_PURPOSES)[number];
 export const CATCH_MODES = ["all", "rare_only", "shiny_legendary_only", "off"] as const;
 export type CatchMode = (typeof CATCH_MODES)[number];
 
+const legendaryEncounterSchema = z.object({
+  channelId: z.string(),
+  messageId: z.string(),
+  threadId: z.string().optional(),
+  species: z.string(),
+  dexNumber: z.number().optional(),
+  tier: z.number().optional(),
+  area: z.string().optional(),
+  location: z.string().optional(),
+  endsAt: z.number().optional(),
+  startedAt: z.number(),
+  endedAt: z.number().optional(),
+});
+
+export type LegendaryEncounterRecord = z.infer<typeof legendaryEncounterSchema>;
+
 const stateSchema = z.object({
   version: z.literal(1),
   profile: z.string(),
@@ -36,6 +52,8 @@ const stateSchema = z.object({
    * unlink without the privileged members intent. Value: the nickname the bot set, or "".
    */
   linkedMembers: z.record(z.string()).default({}),
+  /** Wild legendary encounters with a Discord post, by the game's encounter id. */
+  legendaryEncounters: z.record(legendaryEncounterSchema).default({}),
 });
 
 export type BotState = z.infer<typeof stateSchema>;
@@ -56,7 +74,7 @@ export class StateStore {
 
   private load(): BotState {
     if (!existsSync(this.file)) {
-      return { version: 1, profile: this.profile, channels: {}, roles: {}, linkedMembers: {} };
+      return { version: 1, profile: this.profile, channels: {}, roles: {}, linkedMembers: {}, legendaryEncounters: {} };
     }
     const parsed = stateSchema.parse(JSON.parse(readFileSync(this.file, "utf8")));
     if (parsed.profile !== this.profile) {

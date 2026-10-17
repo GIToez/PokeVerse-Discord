@@ -15,6 +15,8 @@ import {
   type MessageCreateOptions,
   type MessageEditOptions,
   type TextChannel,
+  type ThreadChannel,
+  ThreadAutoArchiveDuration,
 } from "discord.js";
 import type { StateStore } from "../utils/stateStore.js";
 import type { ChannelPurpose } from "../utils/stateStore.js";
@@ -29,6 +31,7 @@ import type {
   PermissionName,
   PermissionOverwriteSpec,
   RoleInfo,
+  ThreadSink,
 } from "./ports.js";
 
 function toBits(names: PermissionName[]): bigint {
@@ -78,7 +81,7 @@ function toEditOptions(message: OutgoingMessage): MessageEditOptions {
 }
 
 export class TextChannelSink implements ChannelSink {
-  constructor(private readonly channel: TextChannel) {}
+  constructor(protected readonly channel: TextChannel | ThreadChannel) {}
 
   get id(): string {
     return this.channel.id;
@@ -116,6 +119,46 @@ export class TextChannelSink implements ChannelSink {
       throw error;
     }
   }
+
+  async startThread(messageId: string, name: string): Promise<ThreadSink> {
+    const channel = this.channel;
+    if (channel.isThread()) {
+      throw new Error("Threads can't have threads");
+    }
+    const message = await channel.messages.fetch(messageId);
+    const thread = await message.startThread({ name: name.slice(0, 100), autoArchiveDuration: ThreadAutoArchiveDuration.OneHour });
+    return new ThreadChannelSink(thread);
+  }
+
+  async thread(threadId: string): Promise<ThreadSink | undefined> {
+    const channel = this.channel;
+    if (channel.isThread()) {
+      return undefined;
+    }
+    try {
+      const thread = await (channel as TextChannel).threads.fetch(threadId);
+      return thread ? new ThreadChannelSink(thread) : undefined;
+    } catch (error) {
+      if (error instanceof DiscordAPIError && error.code === RESTJSONErrorCodes.UnknownChannel) {
+        return undefined;
+      }
+      throw error;
+    }
+  }
+}
+
+/** A thread the bot started; sending to an archived thread reopens it. */
+export class ThreadChannelSink extends TextChannelSink implements ThreadSink {
+  constructor(private readonly threadChannel: ThreadChannel) {
+    super(threadChannel);
+  }
+
+  async archive(): Promise<void> {
+    if (!this.threadChannel.archived) {
+      await this.threadChannel.setArchived(true, "Wild legendary encounter ended");
+    }
+  }
+
 }
 
 function isUnknownMember(error: unknown): boolean {

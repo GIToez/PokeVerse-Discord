@@ -47,9 +47,9 @@ export const CHANNEL_DEFINITIONS: readonly ChannelDefinition[] = [
   {
     purpose: "legendarySpawns",
     name: "legendary-spawns",
-    topic: "Legendary Pokemon sightings.",
+    topic: "Legendary Pokemon sightings, one thread per wild legendary.",
     readOnly: true,
-    required: [...POST, "AttachFiles"],
+    required: [...POST, "AttachFiles", "CreatePublicThreads", "SendMessagesInThreads"],
     group: "main",
   },
   {
@@ -104,6 +104,8 @@ export const REQUIRED_GUILD_PERMISSIONS: PermissionName[] = [
   "ManageChannels",
   "ManageRoles",
   "ManageNicknames",
+  "CreatePublicThreads",
+  "SendMessagesInThreads",
 ];
 
 /** Guild permissions only needed for account linking (roles and nicknames). */

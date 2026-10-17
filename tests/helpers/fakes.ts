@@ -13,6 +13,7 @@ import type {
   PermissionName,
   PermissionOverwriteSpec,
   RoleInfo,
+  ThreadSink,
 } from "../../src/bot/ports.js";
 import { loadConfig, type BotConfig } from "../../src/config/load.js";
 import type { ChannelSetup, SetupReport } from "../../src/setup/channelSetup.js";
@@ -116,6 +117,47 @@ export class FakeChannel implements ChannelSink {
   contents(): string[] {
     return this.sent.map((item) => item.message.content ?? "");
   }
+
+  readonly threads = new Map<string, FakeThread>();
+  failThreads = false;
+
+  async startThread(messageId: string, name: string): Promise<ThreadSink> {
+    if (this.failThreads || !this.existing.has(messageId)) {
+      throw new Error("Missing Permissions");
+    }
+    const thread = new FakeThread(`${this.id}-t${this.threads.size + 1}`, name, messageId);
+    this.threads.set(thread.id, thread);
+    return thread;
+  }
+
+  async thread(threadId: string): Promise<ThreadSink | undefined> {
+    return this.threads.get(threadId);
+  }
+
+  thread0(): FakeThread {
+    const thread = [...this.threads.values()][0];
+    if (!thread) {
+      throw new Error(`no thread in ${this.id}`);
+    }
+    return thread;
+  }
+}
+
+export class FakeThread extends FakeChannel implements ThreadSink {
+  archived = false;
+
+  constructor(id: string, readonly name: string, readonly starterId: string) {
+    super(id);
+  }
+
+  override async send(message: OutgoingMessage): Promise<string> {
+    this.archived = false;
+    return super.send(message);
+  }
+
+  async archive(): Promise<void> {
+    this.archived = true;
+  }
 }
 
 export class FakeChannels implements ChannelDirectory {
@@ -147,6 +189,8 @@ export const ALL_PERMISSIONS: PermissionName[] = [
   "AttachFiles",
   "ReadMessageHistory",
   "ManageChannels",
+  "CreatePublicThreads",
+  "SendMessagesInThreads",
 ];
 
 export interface CreatedChannel extends GuildChannelInfo {

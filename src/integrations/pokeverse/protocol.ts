@@ -61,6 +61,36 @@ export const spawnEventSchema = z.object({
   nearestTown: z.string().nullish(),
 });
 
+/**
+ * Wild legendaries (game: 078-wildLegendaries.lua). One `encounterId` per legendary, from
+ * its spawn to its end, so the bot can keep one thread per encounter.
+ */
+export const LEGENDARY_EVENTS = ["spawn", "sighting", "flee", "end", "caught"] as const;
+export const LEGENDARY_END_REASONS = ["defeated", "fled", "staff", "restart", "vanished"] as const;
+
+export const legendaryEventSchema = z.object({
+  kind: z.literal("legendary"),
+  event: z.enum(LEGENDARY_EVENTS),
+  encounterId: z.number().nullish(),
+  species: z.string(),
+  dexNumber: z.number().nullish(),
+  tier: z.number().nullish(),
+  area: z.string().nullish(),
+  position: position.nullish(),
+  nearestTown: z.string().nullish(),
+  /** Unix seconds when it flies off if nobody beats it (spawn). */
+  endsAt: z.number().nullish(),
+  /** "schedule", "staff" or "test" (spawn). */
+  source: z.string().nullish(),
+  health: z.number().nullish(),
+  healthPercent: z.number().nullish(),
+  /** Unknown future reasons are kept as plain strings. */
+  reason: z.string().nullish(),
+  trainers: z.array(z.string()).nullish(),
+  topTrainer: z.string().nullish(),
+  trainer: z.string().nullish(),
+});
+
 export const broadcastEventSchema = z.object({
   kind: z.literal("broadcast"),
   source: z.string(),
@@ -132,6 +162,7 @@ export const gameEventSchema = z.discriminatedUnion("kind", [
   chatEventSchema,
   catchEventSchema,
   spawnEventSchema,
+  legendaryEventSchema,
   broadcastEventSchema,
   restartWarningEventSchema,
   serverStateEventSchema,
@@ -159,6 +190,7 @@ export const responseSchema = z.object({
 export type ChatEvent = z.infer<typeof chatEventSchema>;
 export type CatchEvent = z.infer<typeof catchEventSchema>;
 export type SpawnEvent = z.infer<typeof spawnEventSchema>;
+export type LegendaryEvent = z.infer<typeof legendaryEventSchema>;
 export type BroadcastEvent = z.infer<typeof broadcastEventSchema>;
 export type RestartWarningEvent = z.infer<typeof restartWarningEventSchema>;
 export type ServerStateEvent = z.infer<typeof serverStateEventSchema>;

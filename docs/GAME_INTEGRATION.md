@@ -232,6 +232,7 @@ server -> {"type":"response","requestId":"1","ok":true,"result":{...}}
 | `chat` | `#game-chat` as `[Game] Name: text` |
 | `catch` | `#pokemon-catches` (filtered by catch mode) |
 | `spawn` | `#shiny-spawns` / `#legendary-spawns` |
+| `legendary` | `#legendary-spawns`: one post and thread per wild legendary encounter |
 | `broadcast` | `#game-announcements` |
 | `restart_warning` | `#game-announcements` |
 | `server_state` | `#server-status` message |
@@ -326,6 +327,24 @@ artwork. Shiny and legendary catches are highlighted. Modes: `all`, `rare_only`,
 - Location: `none`, `town` (nearest town, default) or `coordinates`.
 - Monsters placed during server startup are not announced unless `SPAWN_ANNOUNCE_STARTUP=true`.
 - Quest bosses that recreate themselves are reported at most once per 5 minutes per species.
+
+### Wild legendaries
+
+The game's wild legendaries (`078-wildLegendaries.lua`) send `legendary` events instead of
+`spawn` events, each with the game's `encounterId`:
+
+- `spawn`: a post in `#legendary-spawns` (species, area, tier, when it flies off, artwork)
+  and a public thread on it, named `Articuno near Seafoam Islands #31`.
+- `sighting` and `flee`: one line each in the thread.
+- `end` (`defeated`, `fled`, `staff`, `restart`, `vanished`) and `caught`: a line in the
+  thread, and the post is edited with the outcome. The thread is archived, except after a
+  defeat, which is left open for the catch (it archives itself after an hour).
+- Encounters are saved in the state file (`legendaryEncounters`, kept a day), so a bot
+  restart keeps posting into the same thread. Without thread permissions the updates go
+  to the channel itself.
+- `SPAWN_LEGENDARY_ENABLED` and `SPAWN_LOCATION_MODE` apply. Events for an encounter the bot
+  never saw (spawned while it was offline) are skipped, and so are spawns that have already
+  flown off.
 
 ### Legendary list
 

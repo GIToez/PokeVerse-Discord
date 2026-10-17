@@ -30,6 +30,9 @@ runs the game's own server test and then `scripts/live-test.sh`.
   duplicates, stale events.
 - Spawns: routing (a shiny legendary posts once, to the configured channel), location modes,
   startup and source filters, duplicate IDs and repeated creatures.
+- Wild legendaries: the post and thread per encounter, sightings, flee and end in the thread,
+  the post edited with the outcome, the thread left open after a defeat for the catch, a bot
+  restart, no thread permission, duplicates, unknown and stale encounters.
 - Announcements: GM/staff broadcasts, restart warnings and cancellation, manual posts.
 - Status: one message edited in place, recreated when deleted, offline on disconnect,
   restart detection across bot restarts.

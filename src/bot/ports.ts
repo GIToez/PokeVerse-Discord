@@ -35,6 +35,14 @@ export interface ChannelSink {
   edit(messageId: string, message: OutgoingMessage): Promise<boolean>;
   /** Deletes a message sent by the bot. Resolves false if it no longer exists. */
   delete(messageId: string): Promise<boolean>;
+  /** Starts a public thread on one of the bot's messages (text channels only). */
+  startThread?(messageId: string, name: string): Promise<ThreadSink>;
+  /** A thread of this channel, or undefined if it was deleted. */
+  thread?(threadId: string): Promise<ThreadSink | undefined>;
+}
+
+export interface ThreadSink extends ChannelSink {
+  archive(): Promise<void>;
 }
 
 export interface ChannelDirectory {

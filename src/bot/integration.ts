@@ -13,6 +13,7 @@ import { CatchAnnouncer } from "../services/catches/catchAnnouncer.js";
 import { ChatRelay } from "../services/chat/chatRelay.js";
 import { ArtworkResolver } from "../services/pokemon/artwork.js";
 import { PokemonAutocomplete } from "../services/pokemon/pokemonLookup.js";
+import { LegendaryEncounters } from "../services/legendaries/legendaryEncounters.js";
 import { SpawnAnnouncer } from "../services/spawns/spawnAnnouncer.js";
 import { StatusService } from "../services/status/statusService.js";
 import { ChannelSetup } from "../setup/channelSetup.js";
@@ -46,6 +47,7 @@ export class GameIntegration {
   readonly chat: ChatRelay;
   readonly catches: CatchAnnouncer;
   readonly spawns: SpawnAnnouncer;
+  readonly legendaries: LegendaryEncounters;
   readonly announcer: Announcer;
   readonly status: StatusService;
   readonly setup: ChannelSetup;
@@ -110,6 +112,16 @@ export class GameIntegration {
       queue: this.queues.spawns!,
       artwork: this.artwork,
       logger: logger.child({ component: "spawns" }),
+      metrics,
+      now: options.now,
+    });
+    this.legendaries = new LegendaryEncounters({
+      config: config.spawns,
+      channels,
+      store,
+      queue: this.queues.spawns!,
+      artwork: this.artwork,
+      logger: logger.child({ component: "legendaries" }),
       metrics,
       now: options.now,
     });
@@ -251,6 +263,9 @@ export class GameIntegration {
           break;
         case "spawn":
           this.spawns.handle({ ...envelope, event });
+          break;
+        case "legendary":
+          this.legendaries.handle({ ...envelope, event });
           break;
         case "broadcast":
           this.announcer.handleBroadcast({ ...envelope, event });

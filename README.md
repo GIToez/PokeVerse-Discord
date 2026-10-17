@@ -13,6 +13,7 @@ Discord is down, gameplay is not affected.
 | Two-way chat between `#game-chat` and the in-game Game-Chat channel (`[Discord] Jim: hi` / `[Game] RedTrainer: hi`) | `#game-chat` |
 | Confirmed catch announcements, modes `all`, `rare_only`, `shiny_legendary_only`, `off` | `#pokemon-catches` |
 | Shiny and legendary spawn alerts (a shiny legendary is announced once) | `#shiny-spawns`, `#legendary-spawns` |
+| Wild legendary encounters: one post and thread each, with sightings, flees and the end | `#legendary-spawns` |
 | GM broadcasts, restart/global save warnings, manual announcements | `#game-announcements` |
 | One live status message (online/offline, players, uptime, restarts) | `#server-status` |
 | `/trainer`, `/pokemon` (autocomplete and artwork from the game), `/server` | anywhere, `#bot-commands` suggested |
