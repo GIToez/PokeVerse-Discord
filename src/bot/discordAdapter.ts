@@ -48,7 +48,7 @@ function toNames(bits: Readonly<PermissionsBitField> | null | undefined): Permis
 
 function toInfo(channel: GuildBasedChannel): GuildChannelInfo {
   const kind = channel.type === ChannelType.GuildCategory ? "category" : channel.type === ChannelType.GuildText ? "text" : "other";
-  return { id: channel.id, name: channel.name, kind, parentId: channel.parentId ?? null };
+  return { id: channel.id, name: channel.name, kind, parentId: channel.parentId ?? null, topic: channel.type === ChannelType.GuildText ? channel.topic : undefined };
 }
 
 function overwrites(specs: PermissionOverwriteSpec[]) {
@@ -241,6 +241,24 @@ export class DiscordGuildPort implements GuildPort {
 
   botPermissions(): PermissionName[] {
     return toNames(this.guild.members.me?.permissions);
+  }
+
+  async setChannelTopic(channelId: string, topic: string, reason: string): Promise<void> {
+    const channel = await this.guild.channels.fetch(channelId);
+    if (channel?.type === ChannelType.GuildText) {
+      await channel.setTopic(topic, reason);
+    }
+  }
+
+  async allowBotInChannel(channelId: string, permissions: PermissionName[], reason: string): Promise<void> {
+    const channel = await this.guild.channels.fetch(channelId);
+    if (channel?.type === ChannelType.GuildText) {
+      await channel.permissionOverwrites.edit(
+        this.botUserId,
+        Object.fromEntries(permissions.map((name) => [name, true])),
+        { reason, type: OverwriteType.Member },
+      );
+    }
   }
 
   botChannelPermissions(channelId: string): PermissionName[] | undefined {

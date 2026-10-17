@@ -13,6 +13,8 @@ export interface ChannelDefinition {
   readOnly: boolean;
   /** Permissions the bot needs in this channel to work. */
   required: PermissionName[];
+  /** Earlier default topics; setup replaces them with `topic`, but never a topic someone wrote. */
+  previousTopics?: string[];
   /** "admin" channels live in the private Admin Logs category and are verified before every post. */
   group: "main" | "admin";
 }
@@ -48,6 +50,7 @@ export const CHANNEL_DEFINITIONS: readonly ChannelDefinition[] = [
     purpose: "legendarySpawns",
     name: "legendary-spawns",
     topic: "Legendary Pokemon sightings, one thread per wild legendary.",
+    previousTopics: ["Legendary Pokemon sightings."],
     readOnly: true,
     required: [...POST, "AttachFiles", "CreatePublicThreads", "SendMessagesInThreads"],
     group: "main",

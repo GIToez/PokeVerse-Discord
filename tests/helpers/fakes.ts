@@ -223,7 +223,7 @@ export class FakeGuild implements GuildPort {
   }
 
   async listChannels(): Promise<GuildChannelInfo[]> {
-    return this.channels.map(({ id, name, kind, parentId }) => ({ id, name, kind, parentId }));
+    return this.channels.map(({ id, name, kind, parentId, topic }) => ({ id, name, kind, parentId, ...(kind === "text" ? { topic: topic ?? null } : {}) }));
   }
 
   async createCategory(name: string, overwrites: PermissionOverwriteSpec[]): Promise<GuildChannelInfo> {
@@ -253,6 +253,31 @@ export class FakeGuild implements GuildPort {
       return undefined;
     }
     return this.channelPermissions.get(channelId) ?? this.permissions;
+  }
+
+  /** Topic and overwrite changes made on existing channels. */
+  readonly channelUpdates: string[] = [];
+
+  async setChannelTopic(channelId: string, topic: string): Promise<void> {
+    const channel = this.channels.find((item) => item.id === channelId)!;
+    channel.topic = topic;
+    this.channelUpdates.push(`topic ${channelId}`);
+  }
+
+  async allowBotInChannel(channelId: string, permissions: PermissionName[]): Promise<void> {
+    const channel = this.channels.find((item) => item.id === channelId)!;
+    let own = channel.overwrites.find((item) => item.id === this.botUserId);
+    if (!own) {
+      own = { id: this.botUserId, type: "member", allow: [], deny: [] };
+      channel.overwrites.push(own);
+    }
+    own.allow = [...new Set([...own.allow, ...permissions])];
+    own.deny = own.deny.filter((name) => !permissions.includes(name));
+    const granted = this.channelPermissions.get(channelId);
+    if (granted) {
+      this.channelPermissions.set(channelId, [...new Set([...granted, ...permissions])]);
+    }
+    this.channelUpdates.push(`allow ${channelId} ${permissions.join(",")}`);
   }
 
   /** Roles of the guild (without @everyone). */

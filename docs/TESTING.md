@@ -60,7 +60,8 @@ runs the game's own server test and then `scripts/live-test.sh`.
   the main and never for the server owner, resync paging, a failed Discord call keeping the
   link, rejoin and `account_link` / `account_characters` events.
 - Channel setup: the private Admin Logs category and `#player-activity` overwrites, roles
-  created once, never re-permissioning an adopted channel.
+  created once; on a re-run only an earlier default topic is replaced and only the bot's own
+  overwrite gets permissions it holds server-wide.
 
 ### Live test (real game server)
 

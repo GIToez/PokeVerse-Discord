@@ -20,6 +20,8 @@ export interface ChannelReport {
   channelId: string | undefined;
   action: ChannelAction;
   missingPermissions: PermissionName[];
+  /** What setup changed on an existing channel (new default topic, bot permissions). */
+  updated?: string[];
   error?: string;
   /** Admin channels only: why the channel is not private (empty when it is). */
   privacyProblems?: string[];
@@ -291,7 +293,7 @@ export class ChannelSetup {
     const savedId = this.store.getChannelId(definition.purpose);
     const saved = savedId ? byId.get(savedId) : undefined;
     if (saved && saved.kind === "text") {
-      return this.describe(guild, definition, saved, "kept");
+      return this.describeUpdated(guild, definition, saved, "kept");
     }
 
     const existing = category
@@ -301,7 +303,7 @@ export class ChannelSetup {
       : undefined;
     if (existing) {
       this.save(definition.purpose, existing.id);
-      return this.describe(guild, definition, existing, "adopted");
+      return this.describeUpdated(guild, definition, existing, "adopted");
     }
 
     if (!category || !canCreate) {
@@ -331,6 +333,45 @@ export class ChannelSetup {
         error: (error as Error).message,
       };
     }
+  }
+
+  /**
+   * For an existing channel: replaces an earlier default topic, and adds to the bot's own
+   * overwrite the permissions it needs, has server-wide, but the channel takes away. Nothing
+   * else on the channel is changed.
+   */
+  private async describeUpdated(
+    guild: GuildPort,
+    definition: ChannelDefinition,
+    channel: GuildChannelInfo,
+    action: ChannelAction,
+  ): Promise<ChannelReport> {
+    const updated: string[] = [];
+    let error: string | undefined;
+    try {
+      if (channel.topic !== undefined && definition.previousTopics?.includes(channel.topic ?? "")) {
+        await guild.setChannelTopic(channel.id, definition.topic, REASON);
+        channel.topic = definition.topic;
+        updated.push("topic");
+      }
+      const serverWide = guild.botPermissions();
+      const restorable = this.missingIn(guild, channel.id, definition.required).filter((name) => serverWide.includes(name));
+      if (restorable.length > 0 && serverWide.includes("ManageRoles")) {
+        await guild.allowBotInChannel(channel.id, restorable, REASON);
+        updated.push(`bot permissions (${restorable.join(", ")})`);
+      }
+    } catch (caught) {
+      this.logger.error("Could not update channel", { channel: definition.name, error: caught });
+      error = `Could not update: ${(caught as Error).message}`;
+    }
+    const report = this.describe(guild, definition, channel, action);
+    if (updated.length > 0) {
+      report.updated = updated;
+    }
+    if (error) {
+      report.error = error;
+    }
+    return report;
   }
 
   private describe(
@@ -467,6 +508,9 @@ export function formatSetupReport(report: SetupReport): string {
   for (const channel of report.channels) {
     const where = channel.channelId ? `<#${channel.channelId}>` : `#${channel.name}`;
     let line = `- ${where}: ${channel.action}`;
+    if (channel.updated?.length) {
+      line += ` (updated: ${channel.updated.join(", ")})`;
+    }
     if (channel.missingPermissions.length > 0) {
       line += ` (missing: ${channel.missingPermissions.join(", ")})`;
     }

@@ -57,6 +57,59 @@ describe("channel setup", () => {
     expect(report.channels.every((channel) => channel.action === "kept")).toBe(true);
   });
 
+  it("updates an earlier default topic on a re-run, but never a topic someone wrote", async () => {
+    const guild = new FakeGuild();
+    const { setup: channelSetup } = setup();
+    await channelSetup.run(guild);
+    const legendary = guild.channels.find((channel) => channel.name === "legendary-spawns")!;
+    const shiny = guild.channels.find((channel) => channel.name === "shiny-spawns")!;
+    legendary.topic = "Legendary Pokemon sightings.";
+    shiny.topic = "Our own shiny channel";
+
+    const report = await channelSetup.run(guild);
+    expect(legendary.topic).toBe("Legendary Pokemon sightings, one thread per wild legendary.");
+    expect(shiny.topic).toBe("Our own shiny channel");
+    const entry = report.channels.find((channel) => channel.name === "legendary-spawns")!;
+    expect(entry).toMatchObject({ action: "kept", updated: ["topic"] });
+    expect(formatSetupReport(report)).toContain(`<#${legendary.id}>: kept (updated: topic)`);
+
+    legendary.topic = "Legendary sightings (edited by staff)";
+    await channelSetup.run(guild);
+    expect(legendary.topic).toBe("Legendary sightings (edited by staff)");
+    expect(guild.channelUpdates).toEqual([`topic ${legendary.id}`]);
+  });
+
+  it("gives the bot thread permissions a channel takes away, only when it has them server-wide", async () => {
+    const guild = new FakeGuild();
+    const { setup: channelSetup } = setup();
+    await channelSetup.run(guild);
+    const legendary = guild.channels.find((channel) => channel.name === "legendary-spawns")!;
+    const withoutThreads = guild.permissions.filter((name) => name !== "CreatePublicThreads" && name !== "SendMessagesInThreads");
+    guild.channelPermissions.set(legendary.id, withoutThreads);
+
+    // Without Manage Roles it cannot edit overwrites: only reported.
+    let report = await channelSetup.run(guild);
+    expect(report.channels.find((channel) => channel.name === "legendary-spawns")!.missingPermissions).toEqual(["CreatePublicThreads", "SendMessagesInThreads"]);
+    expect(guild.channelUpdates).toEqual([]);
+
+    guild.permissions = [...guild.permissions, "ManageRoles"];
+    report = await channelSetup.run(guild);
+    const entry = report.channels.find((channel) => channel.name === "legendary-spawns")!;
+    expect(entry.updated).toEqual(["bot permissions (CreatePublicThreads, SendMessagesInThreads)"]);
+    expect(entry.missingPermissions).toEqual([]);
+    const own = legendary.overwrites.find((overwrite) => overwrite.id === BOT_USER)!;
+    expect(own.allow).toEqual(expect.arrayContaining(["CreatePublicThreads", "SendMessagesInThreads"]));
+    expect(legendary.overwrites.find((overwrite) => overwrite.id === EVERYONE)).toEqual({ id: EVERYONE, type: "role", allow: [], deny: ["SendMessages"] });
+
+    // Missing server-wide too: nothing to grant, only reported.
+    guild.permissions = guild.permissions.filter((name) => name !== "SendMessagesInThreads");
+    guild.channelPermissions.set(legendary.id, guild.permissions.filter((name) => name !== "CreatePublicThreads"));
+    const updates = guild.channelUpdates.length;
+    report = await channelSetup.run(guild);
+    expect(guild.channelUpdates.slice(updates)).toEqual([`allow ${legendary.id} CreatePublicThreads`]);
+    expect(report.missingGuildPermissions).toContain("SendMessagesInThreads");
+  });
+
   it("adopts existing channels by name instead of creating duplicates (lost state file)", async () => {
     const guild = new FakeGuild();
     const category = guild.add({ id: "500000000000000001", name: "pokeverse integration", kind: "category", parentId: null });

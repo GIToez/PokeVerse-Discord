@@ -60,6 +60,14 @@ Manage Roles and Manage Nicknames are only needed with account linking (`LINKING
 An already invited bot keeps its old permissions: add Manage Roles, Manage Nicknames,
 Create Public Threads and Send Messages in Threads to the bot's role (**Server Settings > Roles > PokeVerse**) or open the new invite link.
 
+Then run setup again (`/pokeverse setup`, or `setup` on the command line). For channels
+that already exist it changes only two things, and reports them as "updated":
+
+- a topic that is still an earlier default (for example `#legendary-spawns`' old
+  "Legendary Pokemon sightings.") becomes the current one; a topic someone wrote is kept;
+- permissions the bot needs in a channel, has server-wide, but the channel takes away are
+  added to the bot's own member overwrite (needs Manage Roles). No other overwrite changes.
+
 ### Role order
 
 Discord only lets a bot give roles that are **below its own highest role**, and only change

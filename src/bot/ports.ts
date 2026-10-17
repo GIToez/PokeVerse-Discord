@@ -56,6 +56,8 @@ export interface GuildChannelInfo {
   name: string;
   kind: "category" | "text" | "other";
   parentId: string | null;
+  /** Text channels only. */
+  topic?: string | null;
 }
 
 export interface PermissionOverwriteSpec {
@@ -109,6 +111,9 @@ export interface GuildPort {
   botPermissions(): PermissionName[];
   /** Effective permissions of the bot in a channel, or undefined if the channel is unknown. */
   botChannelPermissions(channelId: string): PermissionName[] | undefined;
+  setChannelTopic(channelId: string, topic: string, reason: string): Promise<void>;
+  /** Adds allows to the bot's own member overwrite on a channel; other overwrites are left alone. */
+  allowBotInChannel(channelId: string, permissions: PermissionName[], reason: string): Promise<void>;
   channelAccess(channelId: string): ChannelAccess | undefined;
   listRoles(): Promise<RoleInfo[]>;
   createRole(name: string, reason: string): Promise<RoleInfo>;
