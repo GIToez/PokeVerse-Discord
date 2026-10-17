@@ -1,8 +1,9 @@
 # Account linking
 
 Players link their Discord account to their PokeVerse game account. Linked members get the
-**Verified Trainer** role, **Ace Trainer** while the account has premium time, and their
-server nickname set to their main character.
+**Verified Trainer** role, **Ace Trainer** while the account has premium time, the staff role
+of their in-game group (**Tutor**, **Senior Tutor**, **Gamemaster**, **Community Manager**,
+**God**) and their server nickname set to their main character.
 
 The game server owns the links (table `discord_account_links`). The bot never reads the game
 database; it asks the game over the bridge, always for one Discord user at a time.
@@ -51,8 +52,9 @@ The player never types their game password into Discord, and the bot never asks 
 
 ## Roles and nickname
 
-- Only the Verified Trainer and Ace Trainer roles are ever added or removed. Every other role
-  is left alone. The bot never changes the global Discord username, only the server nickname.
+- Only the Verified Trainer, Ace Trainer and staff roles are ever added or removed. Every
+  other role is left alone. The bot never gives a role that has the Administrator permission
+  (setup refuses to adopt one, and syncs refuse to hand one out). The bot never changes the global Discord username, only the server nickname.
 - Nickname: the main character's name (cut to 32 characters, the Discord limit). Set when
   linking, on `/main`, `/sync` and when a linked member rejoins. Automatic syncs change it only
   when the main character changed, so a nickname a member picked later is kept. Unlinking
@@ -62,6 +64,16 @@ The player never types their game password into Discord, and the bot never asks 
   65535 means unlimited). The game reduces premium days daily, so the periodic resync
   (`LINK_RESYNC_MINUTES`, default every 15 minutes) removes the role when premium ends.
   `PREMIUM_ROLE_ENABLED=false` turns it off.
+- Staff roles: one Discord role per in-game group 2 to 6 (`data/XML/groups.xml`). The group
+  belongs to a character (`players.group_id`), so the member gets the role of the **highest**
+  staff group among the account's characters (the live group for online characters), and
+  only that one: a promotion or demotion swaps the role, a demotion to Player removes it, and
+  unlinking removes it. The game is authoritative: a staff role given by hand to a linked
+  member whose characters are not in that group is removed at the next sync. Members who are
+  not linked are never touched. Group changes in game send no event, so they reach Discord at
+  the next resync (`LINK_RESYNC_MINUTES`) or `/sync`. A game server older than this feature
+  sends no groups; then staff roles are left alone. `STAFF_ROLES_ENABLED=false` turns them
+  off, `STAFF_ROLE_NAMES` sets the names (and which groups get a role).
 - When Discord refuses a change (role above the bot, server owner, missing permission), the
   link stays and the member and staff get an explanation in `/account`, `/sync` and the log.
   See [Role order](DISCORD_CONFIGURATION.md#role-order).
@@ -106,6 +118,8 @@ that only someone logged in to the game account can see.
 | `LINKING_ENABLED` | `true` | Register the account commands and sync roles. |
 | `VERIFIED_ROLE_NAME` | `Verified Trainer` | Name used when the role is created or adopted. |
 | `PREMIUM_ROLE_ENABLED` / `PREMIUM_ROLE_NAME` | `true` / `Ace Trainer` | Premium role. |
+| `STAFF_ROLES_ENABLED` | `true` | Staff roles from the in-game group. |
+| `STAFF_ROLE_NAMES` | `2=Tutor,3=Senior Tutor,4=Gamemaster,5=Community Manager,6=God` | `group id=role name` pairs; leave a group out to give it no role. |
 | `NICKNAME_SYNC` | `true` | Set the server nickname to the main character. |
 | `LINK_RESYNC_MINUTES` | `15` | Periodic re-check of all links; `0` turns it off. |
 | `DISCORD_MEMBERS_INTENT` | `false` | Restore roles immediately on rejoin (needs the Server Members intent in the Developer Portal). |

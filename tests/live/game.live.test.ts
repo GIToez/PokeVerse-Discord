@@ -21,7 +21,10 @@ const live = port && secret && process.env.PV_GAME_REPO ? describe : describe.sk
 
 const TRAINER = { account: "livetrainer", password: "secret", character: "Live Trainer" };
 const STAFF = { account: "livestaff", password: "secret", character: "Live Staff" };
-/** Two characters, "Live Linker" created first; scripts/live-test.sh gives the account premium days. */
+/**
+ * Two characters, "Live Linker" created first; scripts/live-test.sh gives the account premium
+ * days and makes Live Linker a Senior Tutor (group 3).
+ */
 const LINKER = { account: "livelink", password: "secret", character: "Live Second" };
 const LINK_USER = "1234567890123456789";
 
@@ -264,7 +267,8 @@ live("live: bot against the real PokeVerse game server", () => {
     expect(linked.message.embeds![0]!.description).toContain("Main character: **Live Linker**");
     const member = guild.members.get(LINK_USER)!;
     const roles = integration.linking!.roleIds();
-    expect(member.roleIds).toEqual([roles.verified, roles.premium]);
+    const seniorTutor = guild.roles.find((role) => role.name === "Senior Tutor")!.id;
+    expect(member.roleIds).toEqual([roles.verified, roles.premium, seniorTutor]);
     expect(member.nickname).toBe("Live Linker");
     const reused = await integration.commands.handle(linkCommand("link", { code: code! }));
     expect(reused.message.embeds![0]!.description).toMatch(/already linked/);
@@ -276,7 +280,7 @@ live("live: bot against the real PokeVerse game server", () => {
     expect(linkPost["Main character"]).toMatch(/^Live Linker \(level \d+\)$/);
     expect(linkPost.Characters).toBe("2");
     expect(linkPost.Premium).toMatch(/^Yes \(\d+ days left\)$/);
-    expect(linkPost.Roles).toBe("Given: Verified Trainer, Ace Trainer");
+    expect(linkPost.Roles).toBe("Given: Verified Trainer, Ace Trainer, Senior Tutor");
     expect(activity().filter((embed) => embed?.title === "Account linked")).toHaveLength(1);
 
     const status = await actor.call("command", { player: "linker", text: "!discord status" });
@@ -329,7 +333,7 @@ live("live: bot against the real PokeVerse game server", () => {
     const unlinkPost = fieldsOf(activity().find((embed) => embed?.title === "Account unlinked"));
     console.log("[live] unlink embed:", JSON.stringify(unlinkPost));
     expect(unlinkPost.How).toBe("`!discord unlink` in the game");
-    expect(unlinkPost.Roles).toBe("Removed: Verified Trainer, Ace Trainer");
+    expect(unlinkPost.Roles).toBe("Removed: Verified Trainer, Ace Trainer, Senior Tutor");
   });
 
   it("reconnects after losing the bridge connection and keeps working", async () => {

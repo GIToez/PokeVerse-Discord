@@ -21,7 +21,7 @@ Discord is down, gameplay is not affected.
 | Automatic creation of the "PokeVerse Integration" category and channels; never deletes anything | on startup (development) or `setup` |
 | Private staff log of logins and logouts (character, level, account, IP, approximate location, client, session, reason) and of account links and unlinks, posted only while the channel is verified private, deleted after 30 days | `Admin Logs` / `#player-activity` |
 | Account linking with a one-time code from `!discord link` in game: `/link`, `/unlink`, `/account`, `/characters`, `/main`, `/sync` (all private) | anywhere |
-| **Verified Trainer** role for linked members, **Ace Trainer** while the game account has premium time, server nickname = main character | automatic |
+| **Verified Trainer** role for linked members, **Ace Trainer** while the game account has premium time, **Tutor** / **Senior Tutor** / **Gamemaster** / **Community Manager** / **God** for the highest in-game staff group, server nickname = main character | automatic |
 
 Out of scope for this version: GTS, trading, marketplace, purchases, catching or battling
 through Discord.

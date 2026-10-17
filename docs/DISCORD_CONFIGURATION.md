@@ -48,7 +48,7 @@ The link uses the scopes `bot applications.commands` and exactly these permissio
 | Attach Files | Pokemon artwork from the game client |
 | Read Message History | Find and edit the status message |
 | Manage Channels | Create the "PokeVerse Integration" and private "Admin Logs" categories and their channels |
-| Manage Roles | Create the Verified Trainer and Ace Trainer roles and give/remove them on link changes |
+| Manage Roles | Create the Verified Trainer, Ace Trainer and staff roles and give/remove them on link changes |
 | Manage Nicknames | Set a linked member's server nickname to their main character |
 | Create Public Threads | One thread per wild legendary in `#legendary-spawns` |
 | Send Messages in Threads | Post the legendary's sightings and end in its thread |
@@ -72,8 +72,10 @@ that already exist it changes only two things, and reports them as "updated":
 
 Discord only lets a bot give roles that are **below its own highest role**, and only change
 nicknames of members whose highest role is below it. After the first setup, drag the bot's
-role (named after the bot, e.g. "PokeVerse") **above Verified Trainer and Ace Trainer**
-in **Server Settings > Roles**. `/pokeverse status` reports roles the bot cannot assign.
+role (named after the bot, e.g. "PokeVerse") **above Verified Trainer, Ace Trainer and the
+staff roles (Tutor, Senior Tutor, Gamemaster, Community Manager, God)** in **Server Settings >
+Roles**. The bot also cannot change the nickname of a member whose highest role is above the
+bot's, so keep any separate moderator roles in mind. `/pokeverse status` reports roles the bot cannot assign.
 The server owner's nickname can never be changed by a bot; the bot reports this instead of
 failing.
 
@@ -118,8 +120,11 @@ post the bot checks who can see the channel; if `@everyone` or any other role or
 nothing is posted until it is fixed. See [PRIVACY.md](PRIVACY.md).
 
 With account linking enabled, setup also creates (or adopts by name) the roles **Verified
-Trainer** and **Ace Trainer** (`VERIFIED_ROLE_NAME`, `PREMIUM_ROLE_NAME`) without any
-permissions. You can rename, recolor or move them; the saved role IDs keep working.
+Trainer** and **Ace Trainer** (`VERIFIED_ROLE_NAME`, `PREMIUM_ROLE_NAME`) and the staff roles
+**Tutor**, **Senior Tutor**, **Gamemaster**, **Community Manager** and **God**
+(`STAFF_ROLE_NAMES`), all without any permissions. Give the staff roles Discord permissions
+yourself if you want (for example Manage Messages for Gamemasters), but never Administrator:
+the bot refuses to adopt or hand out a role with Administrator. You can rename, recolor or move them; the saved role IDs keep working.
 
 Rules:
 

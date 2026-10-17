@@ -65,7 +65,7 @@ Visible to members with **Manage Server** by default; see
 
 | Subcommand | Effect |
 | --- | --- |
-| `setup` | Create missing channels (including the private `Admin Logs` / `#player-activity`) and the Verified Trainer / Ace Trainer roles, adopt existing ones by name, report missing permissions and whether `#player-activity` is private. Never deletes channels or roles. On existing channels it only replaces an earlier default topic and adds missing permissions to the bot's own overwrite. |
+| `setup` | Create missing channels (including the private `Admin Logs` / `#player-activity`) and the Verified Trainer / Ace Trainer / staff roles, adopt existing ones by name (never one with Administrator), report missing permissions and whether `#player-activity` is private. Never deletes channels or roles. On existing channels it only replaces an earlier default topic and adds missing permissions to the bot's own overwrite. |
 | `status` | Profile, bridge connection, catch mode, chat and spawn settings, activity log and linking state, queue sizes, channel/permission/privacy report, counters. |
 | `channel purpose:<feature> channel:<#channel>` | Use an existing text channel for a feature (stored in the state file). |
 | `catches mode:<mode>` | `all`, `rare_only` (shiny, legendary and `CATCH_RARE_SPECIES`), `shiny_legendary_only`, `off`. Stored in the state file and takes effect immediately. |

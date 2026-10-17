@@ -158,6 +158,10 @@ automation has no write access to the game repository (push returned HTTP 403). 
 meant for a branch `cursor/discord-phase2-ef3d` and a PR against game `main`. The full
 protocol reference is `docs/discord-bridge.md` in that series.
 
+Those four commits are now on game `main`. The current series is one commit on `main` at
+`22f845b`: `groupIds` in the link summary for the staff roles (see
+[ACCOUNT_LINKING.md](ACCOUNT_LINKING.md#roles-and-nickname)).
+
 ### Phase 2 (player sessions and account linking)
 
 - **C++**: session tracking in `Player::onPlacedCreature` (after the login scripts accepted

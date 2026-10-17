@@ -12,7 +12,7 @@ scripts/live-test.sh <game repo> <game server binary>    # against a real game s
 | --- | --- | --- | --- |
 | Unit | `tests/unit/*.test.ts` | 152 | Fakes for Discord channels, the guild (roles, members, overwrites) and the game API |
 | Integration | `tests/integration/*.test.ts` | 22 | The real bridge client and `GameIntegration` against a fake bridge server speaking the protocol over real TCP |
-| Live | `tests/live/game.live.test.ts` | 16 | **A real PokeVerse game server** (`main` + Phase 2 patches), real MariaDB, real game clients |
+| Live | `tests/live/game.live.test.ts` | 16 | **A real PokeVerse game server** (`main` + the patches in `integrations/pokeverse-game/`), real MariaDB, real game clients |
 | Game-side | `scripts/discord-bridge-test.py` (game repo) | - | Real server and clients, protocol-level |
 
 All of them run in CI (`.github/workflows/ci.yml`). The live job checks out the game at
@@ -56,7 +56,9 @@ runs the game's own server test and then `scripts/live-test.sh`.
   normalization and every game error code, `/unlink` buttons (confirm, cancel, other user,
   expiry), `/account` and `/characters` ephemeral, `/main` autocomplete and ownership,
   `/sync`, admin `/pokeverse unlink`, Verified Trainer and Ace Trainer added and removed
-  while other roles stay, role hierarchy and missing permission reports, nickname set from
+  while other roles stay, the staff role of the highest in-game group (promotion, demotion,
+  unlink, hand-given roles removed, older game without groups, roles with Administrator
+  never given), role hierarchy and missing permission reports, nickname set from
   the main and never for the server owner, resync paging, a failed Discord call keeping the
   link, rejoin and `account_link` / `account_characters` events.
 - Channel setup: the private Admin Logs category and `#player-activity` overwrites, roles
@@ -84,11 +86,11 @@ game server.
 | Spawns | Real shiny and legendary spawns, routed correctly, boss cooldown |
 | GM broadcast | `/b` from a GM, posted exactly once |
 | Player activity | Real logins in the private channel: character, level, account reference, IP (loopback, "No location"), client "OTClient (Windows), protocol 312", session id, online count |
-| Link | Code from a real `!discord link`, redeemed with `/link`; Verified Trainer and Ace Trainer added, nickname set to "Live Linker" |
-| Link post | "Account linked" in `#player-activity` with the real main character, 2 characters, "Yes (5 days left)" and both roles given |
+| Link | Code from a real `!discord link`, redeemed with `/link`; Verified Trainer, Ace Trainer and Senior Tutor (Live Linker is in game group 3, Live Second, online, in group 1) added, nickname set to "Live Linker" |
+| Link post | "Account linked" in `#player-activity` with the real main character, 2 characters, "Yes (5 days left)" and the three roles given |
 | `/account`, `/characters`, `/main` | Real account data ("Yes (5 days left)" premium), switching the main to "Live Second" renames the member |
 | Logout | Real logout posted with reason "Logged out" |
-| In-game unlink | `!discord unlink confirm` removes both roles and the nickname; "Account unlinked" posted with how and the roles removed |
+| In-game unlink | `!discord unlink confirm` removes the three roles and the nickname; "Account unlinked" posted with how and the roles removed |
 | Reconnect | Bridge connection replaced, bot reconnects and keeps working, no false "Session ended" |
 | Restart warning | `/shutdown 10` and `/shutdown stop` |
 

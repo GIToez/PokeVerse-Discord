@@ -12,8 +12,8 @@ Follow [DISCORD_CONFIGURATION.md](DISCORD_CONFIGURATION.md):
 2. Enable the **Message Content** privileged intent.
 3. Turn on Developer Mode in Discord and copy the development server ID.
 4. For account linking, the bot needs **Manage Roles** and **Manage Nicknames** (the invite
-   link includes them) and its role must be above Verified Trainer and Ace Trainer
-   ([Role order](DISCORD_CONFIGURATION.md#role-order)). Do not give it Administrator.
+   link includes them) and its role must be above Verified Trainer, Ace Trainer and the staff
+   roles ([Role order](DISCORD_CONFIGURATION.md#role-order)). Do not give it Administrator.
 
 ## 2. Prepare the game server
 
@@ -52,8 +52,10 @@ yet and nothing is posted to `#player-activity`.
 4. Open the invite link and add the bot to the development server.
 5. Double-click `start-discord-dev.bat`. On first start the bot creates the
    "PokeVerse Integration" category with its channels, the private "Admin Logs" category with
-   `#player-activity`, the Verified Trainer and Ace Trainer roles, and posts the status message.
-6. In Server Settings > Roles, drag the bot's role above Verified Trainer and Ace Trainer.
+   `#player-activity`, the Verified Trainer, Ace Trainer and staff roles (Tutor to God), and
+   posts the status message.
+6. In Server Settings > Roles, drag the bot's role above Verified Trainer, Ace Trainer and the
+   staff roles.
 7. Try it: log in to the game, check `#player-activity`, type `!discord link` in game and
    `/link code:<code>` in Discord.
 

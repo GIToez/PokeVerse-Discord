@@ -249,5 +249,5 @@ if (-not $SkipBridgeCheck) {
 Write-Host ""
 Write-Host "Done. Run start-discord-dev.bat to start the bot. It creates the Discord channels on first start." -ForegroundColor Green
 Write-Host "For /link: give the bot Manage Roles and Manage Nicknames, and drag its role above" -ForegroundColor Green
-Write-Host "the Verified Trainer and Ace Trainer roles (Server Settings > Roles)." -ForegroundColor Green
+Write-Host "the Verified Trainer, Ace Trainer and staff roles (Tutor to God) (Server Settings > Roles)." -ForegroundColor Green
 exit 0

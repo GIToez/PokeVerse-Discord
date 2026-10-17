@@ -120,6 +120,7 @@ New settings, all optional, with these defaults when they are not in `.env.produ
 | `LINKING_ENABLED` | `true` | `/link` and the account commands |
 | `VERIFIED_ROLE_NAME` | `Verified Trainer` | Role for linked members |
 | `PREMIUM_ROLE_ENABLED` / `PREMIUM_ROLE_NAME` | `true` / `Ace Trainer` | Role while the account has premium time |
+| `STAFF_ROLES_ENABLED` / `STAFF_ROLE_NAMES` | `true` / `2=Tutor,3=Senior Tutor,4=Gamemaster,5=Community Manager,6=God` | Role of the highest in-game staff group among the account's characters |
 | `NICKNAME_SYNC` | `true` | Server nickname = main character |
 | `LINK_RESYNC_MINUTES` | `15` | Periodic check of all links (premium expiry, in-game unlinks) |
 | `DISCORD_MEMBERS_INTENT` | `false` | Instant role restore on rejoin; needs Server Members Intent in the Developer Portal |
