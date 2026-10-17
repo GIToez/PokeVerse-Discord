@@ -41,6 +41,8 @@ describe("wild legendary encounters", () => {
     expect(gameEventSchema.parse(SPAWN)).toMatchObject({ kind: "legendary", event: "spawn", encounterId: 31 });
     expect(gameEventSchema.parse({ kind: "legendary", event: "end", reason: "defeated", encounterId: 31, species: "Articuno",
       trainers: ["Ash"], topTrainer: "Ash" })).toMatchObject({ reason: "defeated" });
+    expect(gameEventSchema.parse({ kind: "legendary", event: "end", reason: "defeated", encounterId: 31, species: "Articuno",
+      trainers: {} })).toMatchObject({ trainers: [] });
   });
 
   it("posts the spawn in #legendary-spawns and opens a thread for the encounter", async () => {

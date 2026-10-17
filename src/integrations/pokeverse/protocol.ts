@@ -86,7 +86,8 @@ export const legendaryEventSchema = z.object({
   healthPercent: z.number().nullish(),
   /** Unknown future reasons are kept as plain strings. */
   reason: z.string().nullish(),
-  trainers: z.array(z.string()).nullish(),
+  /** The game's JSON encoder writes an empty list as {}. */
+  trainers: z.preprocess((value) => (value && typeof value === "object" && !Array.isArray(value) && Object.keys(value).length === 0 ? [] : value), z.array(z.string()).nullish()),
   topTrainer: z.string().nullish(),
   trainer: z.string().nullish(),
 });
