@@ -1,4 +1,4 @@
-import { Client, Events, GatewayIntentBits, type Guild } from "discord.js";
+import { AuditLogEvent, Client, Events, GatewayIntentBits, PermissionFlagsBits, type AnyThreadChannel, type Guild } from "discord.js";
 import { buildCommandDefinitions } from "../commands/definitions.js";
 import type { BotConfig } from "../config/load.js";
 import { createInteractionHandler } from "../events/interactionCreate.js";
@@ -126,6 +126,7 @@ export class BotApp {
 
     client.on(Events.MessageCreate, createMessageHandler(this.integration.chat, logger.child({ component: "chat" })));
     client.on(Events.InteractionCreate, createInteractionHandler(this.integration.commands, logger.child({ component: "commands" })));
+    client.on(Events.ThreadUpdate, (before, after) => void this.onThreadUpdate(before, after));
     client.on(Events.GuildMemberAdd, (member) => {
       if (member.guild.id === config.discord.guildId && !member.user.bot) {
         this.integration.onMemberJoin(member.id);
@@ -133,6 +134,38 @@ export class BotApp {
     });
     this.integration.start();
     logger.info("PokeVerse Discord bot is running");
+  }
+
+  /** A report post's tags changed: the reports service decides if it was a staff answer. */
+  private async onThreadUpdate(before: AnyThreadChannel, after: AnyThreadChannel): Promise<void> {
+    if (after.guildId !== this.config.discord.guildId || !after.parent?.isThreadOnly()) {
+      return;
+    }
+    const tags = [...after.appliedTags].sort();
+    if (tags.join() === [...before.appliedTags].sort().join()) {
+      return;
+    }
+    this.integration.reports.handleTagsChanged({ threadId: after.id, tagIds: tags, by: await this.tagChanger(after) });
+  }
+
+  /** Who changed the thread, from the audit log when the bot may read it. */
+  private async tagChanger(thread: AnyThreadChannel): Promise<string | undefined> {
+    const me = thread.guild.members.me;
+    if (!me?.permissions.has(PermissionFlagsBits.ViewAuditLog)) {
+      return undefined;
+    }
+    try {
+      const logs = await thread.guild.fetchAuditLogs({ type: AuditLogEvent.ThreadUpdate, limit: 5 });
+      const entry = logs.entries.find((item) => item.targetId === thread.id && Date.now() - item.createdTimestamp < 60_000);
+      const executor = entry?.executor;
+      if (!executor || executor.id === this.client.user?.id) {
+        return undefined;
+      }
+      const member = await thread.guild.members.fetch(executor.id).catch(() => undefined);
+      return member?.displayName ?? executor.username ?? undefined;
+    } catch {
+      return undefined;
+    }
   }
 
   async stop(): Promise<void> {

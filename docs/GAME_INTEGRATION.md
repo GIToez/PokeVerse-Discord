@@ -244,6 +244,7 @@ server -> {"type":"response","requestId":"1","ok":true,"result":{...}}
 | `player_logout` (scope `admin`) | `#player-activity` logout embed |
 | `account_link` (scope `account`) | Removes roles and nickname after an in-game unlink |
 | `account_characters` (scope `account`) | Re-syncs the member after a character was created or deleted |
+| `report` (player reports: scope `admin`) | `#bug-reports` / `#player-reports` forum posts; `action` is `created`, `updated` (with `change`) or `screenshot` |
 
 | Request | Used by |
 | --- | --- |
@@ -259,6 +260,9 @@ server -> {"type":"response","requestId":"1","ok":true,"result":{...}}
 | `link.setMain` | `/main` |
 | `link.unlink` | `/unlink`, `/pokeverse unlink` |
 | `link.list` | Periodic resync (premium expiry, Ace Trainer) and startup |
+| `report.setStatus` | A status tag picked on a report post |
+| `report.get` | A report's current state |
+| `report.screenshot` | The report's screenshot, 12,000 base64 characters at a time |
 
 The bot validates every message with zod schemas (`src/integrations/pokeverse/protocol.ts`)
 and ignores unknown event kinds, so the game can add events without breaking older bots.

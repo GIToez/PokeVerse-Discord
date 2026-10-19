@@ -38,7 +38,7 @@ node dist/bot.cjs invite          # or: configure-discord-dev.bat prints it
 ```
 
 The link uses the scopes `bot applications.commands` and exactly these permissions
-(integer `309640416272`). **Administrator is not requested.**
+(integer `326820285456`). **Administrator is not requested.**
 
 | Permission | Why |
 | --- | --- |
@@ -51,14 +51,18 @@ The link uses the scopes `bot applications.commands` and exactly these permissio
 | Manage Roles | Create the Verified Trainer, Ace Trainer and staff roles and give/remove them on link changes |
 | Manage Nicknames | Set a linked member's server nickname to their main character |
 | Create Public Threads | One thread per wild legendary in `#legendary-spawns` |
-| Send Messages in Threads | Post the legendary's sightings and end in its thread |
+| Send Messages in Threads | Post the legendary's sightings and end in its thread, and report updates in their posts |
+| Manage Threads | Report posts: set their status tags (moderated tags), rename and archive them |
 
 Manage Channels is only needed for automatic setup. If you prefer, create the channels
 yourself, assign them with `/pokeverse channel`, and remove the permission afterwards.
-Manage Roles and Manage Nicknames are only needed with account linking (`LINKING_ENABLED`).
+Manage Roles and Manage Nicknames are only needed with account linking (`LINKING_ENABLED`),
+Manage Threads only with the report forums (`BUG_REPORTS_ENABLED`, `PLAYER_REPORTS_ENABLED`).
+Optional: **View Audit Log** lets the bot name the staff member who changed a report's status
+tag (otherwise the game shows "Discord staff").
 
 An already invited bot keeps its old permissions: add Manage Roles, Manage Nicknames,
-Create Public Threads and Send Messages in Threads to the bot's role (**Server Settings > Roles > PokeVerse**) or open the new invite link.
+Create Public Threads, Send Messages in Threads and Manage Threads to the bot's role (**Server Settings > Roles > PokeVerse**) or open the new invite link.
 
 Then run setup again (`/pokeverse setup`, or `setup` on the command line). For channels
 that already exist it changes only two things, and reports them as "updated":
@@ -66,7 +70,9 @@ that already exist it changes only two things, and reports them as "updated":
 - a topic that is still an earlier default (for example `#legendary-spawns`' old
   "Legendary Pokemon sightings.") becomes the current one; a topic someone wrote is kept;
 - permissions the bot needs in a channel, has server-wide, but the channel takes away are
-  added to the bot's own member overwrite (needs Manage Roles). No other overwrite changes.
+  added to the bot's own member overwrite (needs Manage Roles). No other overwrite changes;
+- a report forum gets back the status and category tags it is missing (by name; tags someone
+  renamed count as missing, tags someone added are kept).
 
 ### Role order
 
@@ -108,8 +114,10 @@ PokeVerse Integration
   #game-announcements   news, GM broadcasts, restarts    read-only
   #server-status        one live status message          read-only
   #bot-commands         /trainer, /pokemon, /server      members can write
-Admin Logs                                               private (activity log enabled)
+  #bug-reports          forum: one post per bug report   members comment, staff set tags
+Admin Logs                                               private (activity log or player reports)
   #player-activity      staff-only login/logout/link log read-only, authorized viewers only
+  #player-reports       forum: one post per player report authorized viewers only
 ```
 
 `Admin Logs` and `#player-activity` are created with `@everyone` denied View Channel, the bot
@@ -141,6 +149,33 @@ Rules:
 - A state file that belongs to another guild is refused, so development and production
   state cannot get mixed up.
 
+## Report forums
+
+Bug reports and player reports sent from the game's Reports window (Ctrl+Z, or "Report
+player" on a player or a chat line) become forum posts:
+
+- `#bug-reports` (public): members can read and comment, only the bot creates posts.
+- `#player-reports` (in Admin Logs): private like `#player-activity`, checked before every
+  post. Viewers get View Channel, Read Message History, Send Messages in Threads and Manage
+  Threads in it, so they can answer in the posts and change the tags.
+
+Each post is named `[#12] title` and its first message has the whole report: the reporter
+(level, vocation, and their Discord account when linked), where they stood (and the area),
+the Pokemon out, the client, and for player reports the reported player then, the reported
+chat message and their last channel messages. A screenshot sent with the report is posted
+below it. Status changes, notes, who took the report and merged reports are lines in the
+post; a closed report's post is archived.
+
+Tags: one status tag (Open, Confirmed, Planned, In progress, Fixed, Won't fix, Duplicate for
+bugs; Open, Investigating, Action taken, No action, Duplicate for players) and one category
+tag. The status tags are **moderated**: only members with Manage Threads can pick them. Picking
+another status tag changes the report in the game (`REPORT_TAG_SYNC`), the reporter is told
+in the game and the line in the post says who did it. Taking the status tag off, or a
+change the game refuses, puts the tag back.
+
+A linked reporter is pinged on their bug report's post and when its status changes
+(`REPORT_MENTION_REPORTER`); player reports never ping anyone.
+
 ## Admin access
 
 `/pokeverse` is hidden from members without **Manage Server** by default (server
@@ -151,5 +186,6 @@ it; otherwise Manage Server is required.
 ## Bot messages and mentions
 
 All bot messages are sent with mentions disabled (`allowed_mentions: { parse: [] }`).
+The only exception is the linked reporter of a bug report, on their own post.
 Relayed chat also has `@everyone`, `@here`, user, role and channel mentions neutralized and
 Markdown escaped, so game players cannot ping Discord users.

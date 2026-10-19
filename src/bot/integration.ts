@@ -1,7 +1,7 @@
 import type { BotConfig } from "../config/load.js";
 import { CommandRouter } from "../commands/router.js";
 import { BridgeClient, type ConnectedInfo } from "../integrations/pokeverse/bridgeClient.js";
-import { createAdminApi, createGameApi, createLinkApi, type GameApi, type LinkApi } from "../integrations/pokeverse/gameApi.js";
+import { createAdminApi, createGameApi, createLinkApi, createReportApi, type GameApi, type LinkApi } from "../integrations/pokeverse/gameApi.js";
 import { FEATURES, type GameEventEnvelope } from "../integrations/pokeverse/protocol.js";
 import { LinkCommands } from "../commands/linkCommands.js";
 import { ActivityLog } from "../services/activity/activityLog.js";
@@ -14,6 +14,7 @@ import { ChatRelay } from "../services/chat/chatRelay.js";
 import { ArtworkResolver } from "../services/pokemon/artwork.js";
 import { PokemonAutocomplete } from "../services/pokemon/pokemonLookup.js";
 import { LegendaryEncounters } from "../services/legendaries/legendaryEncounters.js";
+import { ReportForums } from "../services/reports/reportForums.js";
 import { SpawnAnnouncer } from "../services/spawns/spawnAnnouncer.js";
 import { StatusService } from "../services/status/statusService.js";
 import { ChannelSetup } from "../setup/channelSetup.js";
@@ -56,6 +57,7 @@ export class GameIntegration {
   readonly links: LinkApi;
   readonly activity: ActivityLog | undefined;
   readonly linking: LinkService | undefined;
+  readonly reports: ReportForums;
   private readonly queues: Record<string, DeliveryQueue>;
   private resyncTimer: NodeJS.Timeout | undefined;
 
@@ -82,6 +84,7 @@ export class GameIntegration {
       announcements: queue("announcements"),
       activity: queue("activity"),
       linking: queue("linking", 1000),
+      reports: queue("reports", 1000),
     };
     this.links = createLinkApi(this.bridge);
 
@@ -156,6 +159,19 @@ export class GameIntegration {
           ...config.linking.staffRoles.map(({ groupId, name }) => ({ key: `staff:${groupId}` as const, name })),
         ],
       },
+      reports: { bugs: config.reports.bugs, players: config.reports.players },
+    });
+    this.reports = new ReportForums({
+      config: config.reports,
+      channels,
+      guild: options.guild,
+      policy: (botUserId) => this.setup.privacyPolicy(botUserId),
+      store,
+      api: createReportApi(this.bridge),
+      queue: this.queues.reports!,
+      logger: logger.child({ component: "reports" }),
+      metrics,
+      now: options.now,
     });
     this.activity = config.activity.enabled
       ? new ActivityLog({
@@ -288,6 +304,9 @@ export class GameIntegration {
           break;
         case "account_characters":
           this.syncMember(event.discordUserId, "if_changed");
+          break;
+        case "report":
+          this.reports.handle({ ...envelope, event });
           break;
       }
     } catch (error) {

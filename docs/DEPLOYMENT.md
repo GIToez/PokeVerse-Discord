@@ -123,6 +123,10 @@ New settings, all optional, with these defaults when they are not in `.env.produ
 | `STAFF_ROLES_ENABLED` / `STAFF_ROLE_NAMES` | `true` / `2=Tutor,3=Senior Tutor,4=Gamemaster,5=Community Manager,6=God` | Role of the highest in-game staff group among the account's characters |
 | `NICKNAME_SYNC` | `true` | Server nickname = main character |
 | `LINK_RESYNC_MINUTES` | `15` | Periodic check of all links (premium expiry, in-game unlinks) |
+| `BUG_REPORTS_ENABLED` | `true` | `#bug-reports` forum, one post per in-game bug report |
+| `PLAYER_REPORTS_ENABLED` | `true` | Private `#player-reports` forum in Admin Logs (same viewers as `#player-activity`) |
+| `REPORT_MENTION_REPORTER` | `true` | Ping the linked reporter on their bug report's post |
+| `REPORT_TAG_SYNC` | `true` | A status tag picked on Discord changes the report in the game |
 | `DISCORD_MEMBERS_INTENT` | `false` | Instant role restore on rejoin; needs Server Members Intent in the Developer Portal |
 
 Steps for an existing production install:

@@ -159,6 +159,72 @@ export const accountCharactersEventSchema = z.object({
   character: z.string(),
 });
 
+/** One in-game report (083-reports.lua). Player reports are admin-scoped. */
+export const reportSchema = z.object({
+  id: z.number().int().positive(),
+  kind: z.string(),
+  kindName: z.string().optional(),
+  category: z.string(),
+  categoryName: z.string().optional(),
+  status: z.string(),
+  statusName: z.string().optional(),
+  closed: z.boolean().optional(),
+  title: z.string(),
+  description: z.string(),
+  reporter: z.object({
+    name: z.string(),
+    level: z.number().optional(),
+    vocation: z.string().nullish(),
+    discordUserId: discordUserId.nullish(),
+  }),
+  position: position.nullish(),
+  area: z.string().nullish(),
+  pokemon: z.string().nullish(),
+  client: z.string().nullish(),
+  target: z
+    .object({
+      name: z.string(),
+      level: z.number().nullish(),
+      online: z.boolean().nullish(),
+      position: position.nullish(),
+      /** Their last channel lines before the report. */
+      chat: z.array(z.object({ at: z.number(), text: z.string() })).nullish(),
+    })
+    .nullish(),
+  statement: z.string().nullish(),
+  createdAt: z.number(),
+  updatedAt: z.number().optional(),
+  /** The staff member who took it. */
+  assignedTo: z.string().nullish(),
+  /** The report this one repeats. */
+  duplicateOf: z.number().int().nullish(),
+  /** How many reports were merged into this one. */
+  duplicates: z.number().int().optional(),
+  /** A screenshot is stored; "report.screenshot" reads it. */
+  screenshot: z.boolean().optional(),
+});
+
+export const reportEventSchema = z.object({
+  kind: z.literal("report"),
+  scope: z.literal("admin").optional(),
+  action: z.string(),
+  report: reportSchema,
+  change: z
+    .object({
+      status: z.string().optional(),
+      previousStatus: z.string().optional(),
+      note: z.string().nullish(),
+      by: z.string().optional(),
+      source: z.string().optional(),
+      assignedTo: z.string().nullish(),
+      /** This report was merged into that one. */
+      duplicateOf: z.number().int().optional(),
+      /** That report was merged into this one. */
+      duplicate: z.number().int().optional(),
+    })
+    .nullish(),
+});
+
 export const gameEventSchema = z.discriminatedUnion("kind", [
   chatEventSchema,
   catchEventSchema,
@@ -171,6 +237,7 @@ export const gameEventSchema = z.discriminatedUnion("kind", [
   playerLogoutEventSchema,
   accountLinkEventSchema,
   accountCharactersEventSchema,
+  reportEventSchema,
 ]);
 
 export const eventEnvelopeSchema = z.object({
@@ -199,6 +266,8 @@ export type PlayerLoginEvent = z.infer<typeof playerLoginEventSchema>;
 export type PlayerLogoutEvent = z.infer<typeof playerLogoutEventSchema>;
 export type AccountLinkEvent = z.infer<typeof accountLinkEventSchema>;
 export type AccountCharactersEvent = z.infer<typeof accountCharactersEventSchema>;
+export type ReportEvent = z.infer<typeof reportEventSchema>;
+export type GameReport = z.infer<typeof reportSchema>;
 export type GameEvent = z.infer<typeof gameEventSchema>;
 
 export interface GameEventEnvelope<E extends GameEvent = GameEvent> {
@@ -372,3 +441,19 @@ export type TrainerCard = z.infer<typeof trainerCardSchema>;
 export type CardPokemon = z.infer<typeof cardPokemonSchema>;
 export type ServerStatusResult = z.infer<typeof serverStatusResultSchema>;
 export type BridgeConfigResult = z.infer<typeof bridgeConfigResultSchema>;
+
+export const reportSetStatusResultSchema = z.object({ id: z.number(), status: z.string(), changed: z.boolean() });
+export type ReportSetStatusResult = z.infer<typeof reportSetStatusResultSchema>;
+
+export const reportGetResultSchema = z.object({ found: z.boolean(), report: reportSchema.optional() });
+export type ReportGetResult = z.infer<typeof reportGetResultSchema>;
+
+/** A slice of a report's screenshot: base64 PNG, `total` characters in all. */
+export const reportScreenshotResultSchema = z.object({
+  found: z.boolean(),
+  done: z.boolean().optional(),
+  total: z.number().int().optional(),
+  offset: z.number().int().optional(),
+  data: z.string().optional(),
+});
+export type ReportScreenshotResult = z.infer<typeof reportScreenshotResultSchema>;

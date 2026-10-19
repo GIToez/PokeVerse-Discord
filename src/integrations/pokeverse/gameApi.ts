@@ -9,6 +9,9 @@ import {
   linkSummarySchema,
   pokemonResultSchema,
   pokemonSearchResultSchema,
+  reportGetResultSchema,
+  reportScreenshotResultSchema,
+  reportSetStatusResultSchema,
   serverStatusResultSchema,
   trainerResultSchema,
   unlinkResultSchema,
@@ -19,6 +22,9 @@ import {
   type LinkListResult,
   type LinkSummary,
   type PokemonResult,
+  type ReportGetResult,
+  type ReportScreenshotResult,
+  type ReportSetStatusResult,
   type ServerStatusResult,
   type TrainerResult,
 } from "./protocol.js";
@@ -52,6 +58,15 @@ export interface LinkApi {
 export interface AdminApi {
   readonly connected: boolean;
   sessions(): Promise<AdminSessionsResult>;
+}
+
+/** In-game reports: a status tag picked on a forum post answers the report; screenshots are read in slices. */
+export interface ReportApi {
+  readonly connected: boolean;
+  setStatus(id: number, status: string, by: string, note?: string): Promise<ReportSetStatusResult>;
+  get(id: number): Promise<ReportGetResult>;
+  /** Up to `length` base64 characters of the screenshot from `offset` (the game caps a slice). */
+  screenshot(id: number, offset: number, length: number): Promise<ReportScreenshotResult>;
 }
 
 export function createGameApi(client: BridgeClient): GameApi {
@@ -90,5 +105,17 @@ export function createAdminApi(client: BridgeClient): AdminApi {
       return client.connected;
     },
     sessions: () => client.request("admin.sessions", {}, adminSessionsResultSchema),
+  };
+}
+
+export function createReportApi(client: BridgeClient): ReportApi {
+  return {
+    get connected() {
+      return client.connected;
+    },
+    setStatus: (id, status, by, note) =>
+      client.request("report.setStatus", { id, status, by, ...(note ? { note } : {}) }, reportSetStatusResultSchema),
+    get: (id) => client.request("report.get", { id }, reportGetResultSchema),
+    screenshot: (id, offset, length) => client.request("report.screenshot", { id, offset, length }, reportScreenshotResultSchema),
   };
 }
