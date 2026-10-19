@@ -64,7 +64,11 @@ function where(position: GameReport["position"], area?: string | null): string |
     return area ? plain(area) : undefined;
   }
   const coordinates = `\`${position.x}, ${position.y}, ${position.z}\``;
-  return area ? `${coordinates} near ${plain(area)}` : coordinates;
+  if (!area) {
+    return coordinates;
+  }
+  const text = plain(area);
+  return /^near\s/i.test(text) ? `${coordinates} ${text}` : `${coordinates} near ${text}`;
 }
 
 export function postName(report: Pick<GameReport, "id" | "title">): string {

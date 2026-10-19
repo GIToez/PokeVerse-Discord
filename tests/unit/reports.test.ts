@@ -30,7 +30,7 @@ function bugReport(overrides: Partial<GameReport> = {}): GameReport {
     description: "I walked east from the Pokemon Center and got stuck between two rocks.",
     reporter: { name: "Ash", level: 50, vocation: "Hunter", discordUserId: REPORTER },
     position: { x: 3290, y: 800, z: 7 },
-    area: "Pallet",
+    area: "near Pallet, Kanto",
     client: "linux, version 3.1.2",
     createdAt: 1_790_000_000,
     ...overrides,
@@ -184,7 +184,7 @@ describe("report forums: posts", () => {
     expect(first.content).toContain(`<@${REPORTER}>`);
     expect(first.mentionUserIds).toEqual([REPORTER]);
     const embed = first.embeds![0]!;
-    expect(embed.fields).toContainEqual({ name: "Where", value: "`3290, 800, 7` near Pallet", inline: true });
+    expect(embed.fields).toContainEqual({ name: "Where", value: "`3290, 800, 7` near Pallet, Kanto", inline: true });
     expect(embed.fields!.find((field) => field.name === "Reporter")!.value).toContain("**Ash**, level 50, Hunter");
     expect(store.get().reportPosts["12"]).toMatchObject({ threadId: post.id, status: "open", category: "map" });
   });
