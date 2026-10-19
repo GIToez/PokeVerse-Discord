@@ -117,6 +117,11 @@ export const envSchema = z.object({
   ACTIVITY_FILE: optionalString,
   GEOIP_DATABASE: optionalString,
 
+  BUG_REPORTS_ENABLED: bool(true),
+  PLAYER_REPORTS_ENABLED: bool(true),
+  REPORT_MENTION_REPORTER: bool(true),
+  REPORT_TAG_SYNC: bool(true),
+
   LINKING_ENABLED: bool(true),
   VERIFIED_ROLE_NAME: z.string().trim().min(1).max(100).default("Verified Trainer"),
   PREMIUM_ROLE_ENABLED: bool(true),

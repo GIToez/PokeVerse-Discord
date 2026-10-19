@@ -1,4 +1,5 @@
-import type { PermissionName } from "../bot/ports.js";
+import type { ForumTagSpec, PermissionName } from "../bot/ports.js";
+import { forumTagsFor } from "../services/reports/reportKinds.js";
 import type { ChannelPurpose } from "../utils/stateStore.js";
 
 export const CATEGORY_NAME = "PokeVerse Integration";
@@ -17,9 +18,15 @@ export interface ChannelDefinition {
   previousTopics?: string[];
   /** "admin" channels live in the private Admin Logs category and are verified before every post. */
   group: "main" | "admin";
+  /** Defaults to a text channel. Forum channels get `tags`, added again by setup when missing. */
+  type?: "text" | "forum";
+  tags?: ForumTagSpec[];
+  /** The config switch the channel belongs to; without one it is always set up. */
+  feature?: "activity" | "bugReports" | "playerReports";
 }
 
 const POST: PermissionName[] = ["ViewChannel", "SendMessages", "EmbedLinks", "ReadMessageHistory"];
+const FORUM: PermissionName[] = [...POST, "SendMessagesInThreads"];
 
 export const CHANNEL_DEFINITIONS: readonly ChannelDefinition[] = [
   {
@@ -86,6 +93,30 @@ export const CHANNEL_DEFINITIONS: readonly ChannelDefinition[] = [
     readOnly: true,
     required: POST,
     group: "admin",
+    feature: "activity",
+  },
+  {
+    purpose: "bugReports",
+    name: "bug-reports",
+    topic: "Bugs reported in the game (Reports window, Ctrl+Z), one post each. The tags show what became of them. " +
+      "Add what you know in a post; report new bugs in the game so the team gets your position and client.",
+    readOnly: true,
+    required: FORUM,
+    group: "main",
+    type: "forum",
+    tags: forumTagsFor("bug"),
+    feature: "bugReports",
+  },
+  {
+    purpose: "playerReports",
+    name: "player-reports",
+    topic: "PRIVATE staff forum of player reports from the game. Change the status tag to answer the report in the game.",
+    readOnly: true,
+    required: FORUM,
+    group: "admin",
+    type: "forum",
+    tags: forumTagsFor("player"),
+    feature: "playerReports",
   },
 ];
 
@@ -109,7 +140,11 @@ export const REQUIRED_GUILD_PERMISSIONS: PermissionName[] = [
   "ManageNicknames",
   "CreatePublicThreads",
   "SendMessagesInThreads",
+  "ManageThreads",
 ];
+
+/** Guild permissions only needed for the report forums (status tags are moderated, posts are archived). */
+export const REPORT_GUILD_PERMISSIONS: PermissionName[] = ["ManageThreads"];
 
 /** Guild permissions only needed for account linking (roles and nicknames). */
 export const LINKING_GUILD_PERMISSIONS: PermissionName[] = ["ManageRoles", "ManageNicknames"];

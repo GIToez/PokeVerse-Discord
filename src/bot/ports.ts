@@ -8,7 +8,9 @@ import type { ChannelPurpose } from "../utils/stateStore.js";
 
 export interface OutgoingFile {
   name: string;
-  path: string;
+  /** A file on disk, or the bytes in `data`. */
+  path?: string;
+  data?: Buffer;
 }
 
 export interface OutgoingMessage {
@@ -19,6 +21,8 @@ export interface OutgoingMessage {
   suppressEmbeds?: boolean;
   /** Buttons (interaction replies only). */
   buttons?: OutgoingButton[];
+  /** Users this message may ping; every other mention stays silent. */
+  mentionUserIds?: string[];
 }
 
 export interface OutgoingButton {
@@ -45,8 +49,42 @@ export interface ThreadSink extends ChannelSink {
   archive(): Promise<void>;
 }
 
+export interface ForumTag {
+  id: string;
+  name: string;
+}
+
+export interface ForumTagSpec {
+  name: string;
+  emoji?: string;
+  /** Only members with Manage Threads can apply it. */
+  moderated: boolean;
+}
+
+export interface ForumPostSpec {
+  name: string;
+  message: OutgoingMessage;
+  tagIds: string[];
+}
+
+export interface ForumPostSink extends ThreadSink {
+  /** Applies the tags and the name; an archived post is reopened for it and archived again if `archived`. */
+  update(change: { tagIds?: string[]; name?: string; archived?: boolean }): Promise<void>;
+}
+
+export interface ForumSink {
+  readonly id: string;
+  /** The forum's tags right now. */
+  tags(): ForumTag[];
+  createPost(spec: ForumPostSpec): Promise<{ threadId: string; messageId: string }>;
+  /** A post of this forum, or undefined if it was deleted. */
+  post(threadId: string): Promise<ForumPostSink | undefined>;
+}
+
 export interface ChannelDirectory {
   get(purpose: ChannelPurpose): ChannelSink | undefined;
+  /** Forum channels (bug and player reports). */
+  forum?(purpose: ChannelPurpose): ForumSink | undefined;
 }
 
 export type PermissionName = keyof typeof PermissionFlagsBits;
@@ -54,10 +92,12 @@ export type PermissionName = keyof typeof PermissionFlagsBits;
 export interface GuildChannelInfo {
   id: string;
   name: string;
-  kind: "category" | "text" | "other";
+  kind: "category" | "text" | "forum" | "other";
   parentId: string | null;
-  /** Text channels only. */
+  /** Text and forum channels only. */
   topic?: string | null;
+  /** Forum channels only: the names of their tags. */
+  tagNames?: string[];
 }
 
 export interface PermissionOverwriteSpec {
@@ -108,6 +148,16 @@ export interface GuildPort {
     overwrites: PermissionOverwriteSpec[],
     reason: string,
   ): Promise<GuildChannelInfo>;
+  createForumChannel(
+    name: string,
+    parentId: string,
+    topic: string,
+    tags: ForumTagSpec[],
+    overwrites: PermissionOverwriteSpec[],
+    reason: string,
+  ): Promise<GuildChannelInfo>;
+  /** Adds the tags a forum is missing (by name); existing tags are left alone. Returns the names added. */
+  addForumTags(channelId: string, tags: ForumTagSpec[], reason: string): Promise<string[]>;
   /** Guild-level permissions of the bot member. */
   botPermissions(): PermissionName[];
   /** Effective permissions of the bot in a channel, or undefined if the channel is unknown. */

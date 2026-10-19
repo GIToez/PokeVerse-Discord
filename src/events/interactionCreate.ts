@@ -64,7 +64,7 @@ function toReply(message: OutgoingMessage): InteractionEditReplyOptions {
   return {
     content: message.content ?? null,
     embeds: message.embeds ?? [],
-    files: message.files?.map((file) => new AttachmentBuilder(file.path, { name: file.name })),
+    files: message.files?.map((file) => new AttachmentBuilder(file.data ?? file.path ?? "", { name: file.name })),
     components,
     allowedMentions: { parse: [] },
   };

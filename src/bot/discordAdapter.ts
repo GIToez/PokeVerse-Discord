@@ -9,6 +9,7 @@ import {
   PermissionFlagsBits,
   RESTJSONErrorCodes,
   type Client,
+  type ForumChannel,
   type Guild,
   type GuildBasedChannel,
   type Role,
@@ -24,9 +25,15 @@ import type {
   ChannelAccess,
   ChannelDirectory,
   ChannelSink,
+  ForumPostSink,
+  ForumPostSpec,
+  ForumSink,
+  ForumTag,
+  ForumTagSpec,
   GuildChannelInfo,
   GuildPort,
   MemberInfo,
+  OutgoingFile,
   OutgoingMessage,
   PermissionName,
   PermissionOverwriteSpec,
@@ -47,8 +54,22 @@ function toNames(bits: Readonly<PermissionsBitField> | null | undefined): Permis
 }
 
 function toInfo(channel: GuildBasedChannel): GuildChannelInfo {
+  if (channel.type === ChannelType.GuildForum) {
+    return {
+      id: channel.id, name: channel.name, kind: "forum", parentId: channel.parentId ?? null, topic: channel.topic,
+      tagNames: channel.availableTags.map((tag) => tag.name),
+    };
+  }
   const kind = channel.type === ChannelType.GuildCategory ? "category" : channel.type === ChannelType.GuildText ? "text" : "other";
   return { id: channel.id, name: channel.name, kind, parentId: channel.parentId ?? null, topic: channel.type === ChannelType.GuildText ? channel.topic : undefined };
+}
+
+function toTagData(tag: ForumTagSpec) {
+  return { name: tag.name.slice(0, 20), moderated: tag.moderated, emoji: tag.emoji ? { id: null, name: tag.emoji } : null };
+}
+
+function mentions(message: OutgoingMessage) {
+  return message.mentionUserIds?.length ? { parse: [], users: message.mentionUserIds } : { parse: [] };
 }
 
 function overwrites(specs: PermissionOverwriteSpec[]) {
@@ -60,12 +81,16 @@ function overwrites(specs: PermissionOverwriteSpec[]) {
   }));
 }
 
+function attachment(file: OutgoingFile): AttachmentBuilder {
+  return new AttachmentBuilder(file.data ?? file.path ?? "", { name: file.name });
+}
+
 function toCreateOptions(message: OutgoingMessage): MessageCreateOptions {
   return {
     content: message.content,
     embeds: message.embeds,
-    files: message.files?.map((file) => new AttachmentBuilder(file.path, { name: file.name })),
-    allowedMentions: { parse: [] },
+    files: message.files?.map(attachment),
+    allowedMentions: mentions(message),
     flags: message.suppressEmbeds ? MessageFlags.SuppressEmbeds : undefined,
   };
 }
@@ -74,7 +99,7 @@ function toEditOptions(message: OutgoingMessage): MessageEditOptions {
   return {
     content: message.content ?? null,
     embeds: message.embeds ?? [],
-    files: message.files?.map((file) => new AttachmentBuilder(file.path, { name: file.name })),
+    files: message.files?.map(attachment),
     attachments: message.files ? undefined : [],
     allowedMentions: { parse: [] },
   };
@@ -149,16 +174,83 @@ export class TextChannelSink implements ChannelSink {
 
 /** A thread the bot started; sending to an archived thread reopens it. */
 export class ThreadChannelSink extends TextChannelSink implements ThreadSink {
-  constructor(private readonly threadChannel: ThreadChannel) {
+  constructor(
+    protected readonly threadChannel: ThreadChannel,
+    private readonly archiveReason = "Wild legendary encounter ended",
+  ) {
     super(threadChannel);
   }
 
   async archive(): Promise<void> {
     if (!this.threadChannel.archived) {
-      await this.threadChannel.setArchived(true, "Wild legendary encounter ended");
+      await this.threadChannel.setArchived(true, this.archiveReason);
     }
   }
+}
 
+const REPORT_REASON = "PokeVerse report";
+
+/** A forum post the bot made. */
+export class ForumPostChannelSink extends ThreadChannelSink implements ForumPostSink {
+  constructor(thread: ThreadChannel) {
+    super(thread, "Report closed");
+  }
+
+  async update(change: { tagIds?: string[]; name?: string; archived?: boolean }): Promise<void> {
+    const thread = this.threadChannel;
+    if (thread.archived && (change.tagIds !== undefined || change.name !== undefined || change.archived === false)) {
+      await thread.setArchived(false, REPORT_REASON);
+    }
+    const edit: { appliedTags?: string[]; name?: string; reason: string } = { reason: REPORT_REASON };
+    if (change.tagIds !== undefined) {
+      edit.appliedTags = change.tagIds.slice(0, 5);
+    }
+    if (change.name !== undefined && change.name !== thread.name) {
+      edit.name = change.name.slice(0, 100);
+    }
+    if (edit.appliedTags !== undefined || edit.name !== undefined) {
+      await thread.edit(edit);
+    }
+    if (change.archived) {
+      await thread.setArchived(true, REPORT_REASON);
+    }
+  }
+}
+
+export class ForumChannelSink implements ForumSink {
+  constructor(private readonly channel: ForumChannel) {}
+
+  get id(): string {
+    return this.channel.id;
+  }
+
+  tags(): ForumTag[] {
+    return this.channel.availableTags.map((tag) => ({ id: tag.id, name: tag.name }));
+  }
+
+  async createPost(spec: ForumPostSpec): Promise<{ threadId: string; messageId: string }> {
+    const thread = await this.channel.threads.create({
+      name: spec.name.slice(0, 100),
+      message: toCreateOptions(spec.message),
+      appliedTags: spec.tagIds.slice(0, 5),
+      autoArchiveDuration: ThreadAutoArchiveDuration.OneWeek,
+      reason: REPORT_REASON,
+    });
+    // A forum post's first message has the thread's id.
+    return { threadId: thread.id, messageId: thread.id };
+  }
+
+  async post(threadId: string): Promise<ForumPostSink | undefined> {
+    try {
+      const thread = await this.channel.threads.fetch(threadId);
+      return thread ? new ForumPostChannelSink(thread) : undefined;
+    } catch (error) {
+      if (error instanceof DiscordAPIError && error.code === RESTJSONErrorCodes.UnknownChannel) {
+        return undefined;
+      }
+      throw error;
+    }
+  }
 }
 
 function isUnknownMember(error: unknown): boolean {
@@ -184,6 +276,15 @@ export class DiscordChannelDirectory implements ChannelDirectory {
       return undefined;
     }
     return new TextChannelSink(channel);
+  }
+
+  forum(purpose: ChannelPurpose): ForumSink | undefined {
+    const id = this.store.getChannelId(purpose);
+    const channel = id ? this.client.channels.cache.get(id) : undefined;
+    if (!channel || channel.type !== ChannelType.GuildForum || channel.guildId !== this.guildId) {
+      return undefined;
+    }
+    return new ForumChannelSink(channel);
   }
 }
 
@@ -239,20 +340,55 @@ export class DiscordGuildPort implements GuildPort {
     return toInfo(channel);
   }
 
+  async createForumChannel(
+    name: string,
+    parentId: string,
+    topic: string,
+    tags: ForumTagSpec[],
+    specs: PermissionOverwriteSpec[],
+    reason: string,
+  ): Promise<GuildChannelInfo> {
+    const channel = await this.guild.channels.create({
+      name,
+      type: ChannelType.GuildForum,
+      parent: parentId,
+      topic,
+      availableTags: tags.slice(0, 20).map(toTagData),
+      permissionOverwrites: overwrites(specs),
+      reason,
+    });
+    return toInfo(channel);
+  }
+
+  async addForumTags(channelId: string, tags: ForumTagSpec[], reason: string): Promise<string[]> {
+    const channel = await this.guild.channels.fetch(channelId);
+    if (channel?.type !== ChannelType.GuildForum) {
+      return [];
+    }
+    const existing = channel.availableTags;
+    const names = new Set(existing.map((tag) => tag.name.toLowerCase()));
+    const added = tags.filter((tag) => !names.has(tag.name.toLowerCase())).slice(0, Math.max(0, 20 - existing.length));
+    if (added.length === 0) {
+      return [];
+    }
+    await channel.setAvailableTags([...existing, ...added.map(toTagData)], reason);
+    return added.map((tag) => tag.name);
+  }
+
   botPermissions(): PermissionName[] {
     return toNames(this.guild.members.me?.permissions);
   }
 
   async setChannelTopic(channelId: string, topic: string, reason: string): Promise<void> {
     const channel = await this.guild.channels.fetch(channelId);
-    if (channel?.type === ChannelType.GuildText) {
+    if (channel?.type === ChannelType.GuildText || channel?.type === ChannelType.GuildForum) {
       await channel.setTopic(topic, reason);
     }
   }
 
   async allowBotInChannel(channelId: string, permissions: PermissionName[], reason: string): Promise<void> {
     const channel = await this.guild.channels.fetch(channelId);
-    if (channel?.type === ChannelType.GuildText) {
+    if (channel?.type === ChannelType.GuildText || channel?.type === ChannelType.GuildForum) {
       await channel.permissionOverwrites.edit(
         this.botUserId,
         Object.fromEntries(permissions.map((name) => [name, true])),

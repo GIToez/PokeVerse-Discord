@@ -8,6 +8,7 @@ import {
   CHANNEL_DEFINITIONS,
   definitionFor,
   LINKING_GUILD_PERMISSIONS,
+  REPORT_GUILD_PERMISSIONS,
   REQUIRED_GUILD_PERMISSIONS,
   type ChannelDefinition,
 } from "./channels.js";
@@ -60,6 +61,7 @@ export interface SetupOptions {
   adminRoleIds: string[];
   adminUserIds: string[];
   linking: { enabled: boolean; roles: Array<{ key: RoleKey; name: string }> };
+  reports: { bugs: boolean; players: boolean };
 }
 
 const DEFAULT_OPTIONS: SetupOptions = {
@@ -67,11 +69,14 @@ const DEFAULT_OPTIONS: SetupOptions = {
   adminRoleIds: [],
   adminUserIds: [],
   linking: { enabled: false, roles: [] },
+  reports: { bugs: false, players: false },
 };
 
 const REASON = "PokeVerse Discord bot setup";
 const BOT_POST: PermissionName[] = ["ViewChannel", "SendMessages", "EmbedLinks", "ReadMessageHistory"];
 const VIEWER: PermissionName[] = ["ViewChannel", "ReadMessageHistory"];
+/** Staff in a private forum answer in the posts and change their status tags. */
+const FORUM_VIEWER: PermissionName[] = [...VIEWER, "SendMessagesInThreads", "ManageThreads"];
 
 function normalizeName(name: string): string {
   return name.trim().toLowerCase();
@@ -110,7 +115,9 @@ export class ChannelSetup {
   }
 
   private definitions(): readonly ChannelDefinition[] {
-    return CHANNEL_DEFINITIONS.filter((definition) => definition.group === "main" || this.options.activity.enabled);
+    const { activity, reports } = this.options;
+    const enabled = { activity: activity.enabled, bugReports: reports.bugs, playerReports: reports.players };
+    return CHANNEL_DEFINITIONS.filter((definition) => !definition.feature || enabled[definition.feature]);
   }
 
   run(guild: GuildPort): Promise<SetupReport> {
@@ -150,14 +157,15 @@ export class ChannelSetup {
     const channels = await guild.listChannels();
     const channel = channels.find((item) => item.id === channelId);
     const definition = definitionFor(purpose);
-    if (!channel || channel.kind !== "text") {
+    const kind = definition.type ?? "text";
+    if (!channel || channel.kind !== kind) {
       return {
         purpose,
         name: definition.name,
         channelId: undefined,
         action: "failed",
         missingPermissions: [],
-        error: "That is not a text channel in this server.",
+        error: `That is not a ${kind} channel in this server.`,
       };
     }
     this.store.update((state) => {
@@ -189,7 +197,7 @@ export class ChannelSetup {
     const byId = new Map(channels.map((channel) => [channel.id, channel]));
 
     const main = await this.ensureCategory(guild, channels, byId, "categoryId", CATEGORY_NAME, [], canCreate);
-    const admin = this.options.activity.enabled
+    const admin = this.definitions().some((definition) => definition.group === "admin")
       ? await this.ensureCategory(guild, channels, byId, "adminCategoryId", ADMIN_CATEGORY_NAME, this.privateOverwrites(guild), canCreate)
       : { category: undefined, action: "skipped" as ChannelAction };
 
@@ -220,19 +228,21 @@ export class ChannelSetup {
   }
 
   /** @everyone denied; the bot and authorized viewers allowed. */
-  private privateOverwrites(guild: GuildPort): PermissionOverwriteSpec[] {
+  private privateOverwrites(guild: GuildPort, definition?: ChannelDefinition): PermissionOverwriteSpec[] {
     const policy = this.privacyPolicy(guild.botUserId);
+    const forum = definition?.type === "forum";
+    const viewer = forum ? FORUM_VIEWER : VIEWER;
     return [
       { id: guild.everyoneRoleId, type: "role", allow: [], deny: ["ViewChannel"] },
-      { id: guild.botUserId, type: "member", allow: BOT_POST, deny: [] },
-      ...policy.roleIds.map((id): PermissionOverwriteSpec => ({ id, type: "role", allow: VIEWER, deny: ["SendMessages"] })),
-      ...policy.userIds.map((id): PermissionOverwriteSpec => ({ id, type: "member", allow: VIEWER, deny: ["SendMessages"] })),
+      { id: guild.botUserId, type: "member", allow: definition ? [...new Set([...BOT_POST, ...definition.required])] : BOT_POST, deny: [] },
+      ...policy.roleIds.map((id): PermissionOverwriteSpec => ({ id, type: "role", allow: viewer, deny: ["SendMessages"] })),
+      ...policy.userIds.map((id): PermissionOverwriteSpec => ({ id, type: "member", allow: viewer, deny: ["SendMessages"] })),
     ];
   }
 
   private overwritesFor(definition: ChannelDefinition, guild: GuildPort): PermissionOverwriteSpec[] {
     if (definition.group === "admin") {
-      return this.privateOverwrites(guild);
+      return this.privateOverwrites(guild, definition);
     }
     const overwrites: PermissionOverwriteSpec[] = [
       { id: guild.botUserId, type: "member", allow: definition.required, deny: [] },
@@ -291,15 +301,16 @@ export class ChannelSetup {
     category: GuildChannelInfo | undefined,
     canCreate: boolean,
   ): Promise<ChannelReport> {
+    const kind = definition.type ?? "text";
     const savedId = this.store.getChannelId(definition.purpose);
     const saved = savedId ? byId.get(savedId) : undefined;
-    if (saved && saved.kind === "text") {
+    if (saved && saved.kind === kind) {
       return this.describeUpdated(guild, definition, saved, "kept");
     }
 
     const existing = category
       ? channels.find(
-          (channel) => channel.kind === "text" && channel.parentId === category.id && normalizeName(channel.name) === definition.name,
+          (channel) => channel.kind === kind && channel.parentId === category.id && normalizeName(channel.name) === definition.name,
         )
       : undefined;
     if (existing) {
@@ -318,7 +329,10 @@ export class ChannelSetup {
       };
     }
     try {
-      const created = await guild.createTextChannel(definition.name, category.id, definition.topic, this.overwritesFor(definition, guild), REASON);
+      const overwrites = this.overwritesFor(definition, guild);
+      const created = kind === "forum"
+        ? await guild.createForumChannel(definition.name, category.id, definition.topic, definition.tags ?? [], overwrites, REASON)
+        : await guild.createTextChannel(definition.name, category.id, definition.topic, overwrites, REASON);
       this.save(definition.purpose, created.id);
       channels.push(created);
       byId.set(created.id, created);
@@ -354,6 +368,16 @@ export class ChannelSetup {
         await guild.setChannelTopic(channel.id, definition.topic, REASON);
         channel.topic = definition.topic;
         updated.push("topic");
+      }
+      const missingTags = (definition.tags ?? []).filter(
+        (tag) => channel.tagNames !== undefined && !channel.tagNames.some((name) => normalizeName(name) === normalizeName(tag.name)),
+      );
+      if (missingTags.length > 0) {
+        const added = await guild.addForumTags(channel.id, missingTags, REASON);
+        if (added.length > 0) {
+          channel.tagNames = [...(channel.tagNames ?? []), ...added];
+          updated.push(`tags (${added.join(", ")})`);
+        }
       }
       const serverWide = guild.botPermissions();
       const restorable = this.missingIn(guild, channel.id, definition.required).filter((name) => serverWide.includes(name));
@@ -485,9 +509,12 @@ export class ChannelSetup {
     parts: Omit<SetupReport, "guildId" | "missingGuildPermissions" | "ok">,
   ): SetupReport {
     const granted = guild.botPermissions();
-    const needed = this.options.linking.enabled
-      ? REQUIRED_GUILD_PERMISSIONS
-      : REQUIRED_GUILD_PERMISSIONS.filter((permission) => !LINKING_GUILD_PERMISSIONS.includes(permission));
+    const { linking, reports } = this.options;
+    const needed = REQUIRED_GUILD_PERMISSIONS.filter(
+      (permission) =>
+        (linking.enabled || !LINKING_GUILD_PERMISSIONS.includes(permission)) &&
+        (reports.bugs || reports.players || !REPORT_GUILD_PERMISSIONS.includes(permission)),
+    );
     const missingGuildPermissions = granted.includes("Administrator")
       ? []
       : needed.filter((permission) => !granted.includes(permission));

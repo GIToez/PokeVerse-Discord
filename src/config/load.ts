@@ -59,6 +59,16 @@ export interface BotConfig {
     file: string;
     geoipDatabase: string | undefined;
   };
+  reports: {
+    /** Bug reports as posts in the public #bug-reports forum. */
+    bugs: boolean;
+    /** Player reports as posts in the private #player-reports forum (Admin Logs). */
+    players: boolean;
+    /** Ping the linked reporter on their bug report's post and its updates. */
+    mentionReporter: boolean;
+    /** A status tag picked on Discord changes the report in the game. */
+    tagSync: boolean;
+  };
   linking: {
     enabled: boolean;
     verifiedRoleName: string;
@@ -244,6 +254,12 @@ export function loadConfig(options: LoadOptions): BotConfig {
       file: fromConfigDir(raw.ACTIVITY_FILE ?? `data/activity.${profile}.json`),
       geoipDatabase: raw.GEOIP_DATABASE ? fromConfigDir(raw.GEOIP_DATABASE) : undefined,
     },
+    reports: {
+      bugs: raw.BUG_REPORTS_ENABLED,
+      players: raw.PLAYER_REPORTS_ENABLED,
+      mentionReporter: raw.REPORT_MENTION_REPORTER,
+      tagSync: raw.REPORT_TAG_SYNC,
+    },
     linking: {
       enabled: raw.LINKING_ENABLED,
       verifiedRoleName: raw.VERIFIED_ROLE_NAME,
@@ -284,6 +300,7 @@ export function describeConfig(config: BotConfig): Record<string, unknown> {
     activityLog: config.activity.enabled
       ? { ip: config.activity.ipMode, retentionDays: config.activity.retentionDays, geoip: config.activity.geoipDatabase !== undefined }
       : false,
+    reports: { bugs: config.reports.bugs, players: config.reports.players, tagSync: config.reports.tagSync },
     linking: config.linking.enabled
       ? {
           roles: [

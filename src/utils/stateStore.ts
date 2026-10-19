@@ -11,6 +11,8 @@ export const CHANNEL_PURPOSES = [
   "serverStatus",
   "botCommands",
   "playerActivity",
+  "bugReports",
+  "playerReports",
 ] as const;
 
 export type ChannelPurpose = (typeof CHANNEL_PURPOSES)[number];
@@ -34,6 +36,20 @@ const legendaryEncounterSchema = z.object({
 
 export type LegendaryEncounterRecord = z.infer<typeof legendaryEncounterSchema>;
 
+const reportPostSchema = z.object({
+  kind: z.string(),
+  channelId: z.string(),
+  threadId: z.string(),
+  messageId: z.string(),
+  /** The status the post's tags show; a different status tag picked on Discord is a staff change. */
+  status: z.string(),
+  category: z.string().optional(),
+  closed: z.boolean().optional(),
+  createdAt: z.number(),
+});
+
+export type ReportPostRecord = z.infer<typeof reportPostSchema>;
+
 const stateSchema = z.object({
   version: z.literal(1),
   profile: z.string(),
@@ -54,6 +70,8 @@ const stateSchema = z.object({
   linkedMembers: z.record(z.string()).default({}),
   /** Wild legendary encounters with a Discord post, by the game's encounter id. */
   legendaryEncounters: z.record(legendaryEncounterSchema).default({}),
+  /** Forum posts of in-game reports, by the game's report id. */
+  reportPosts: z.record(reportPostSchema).default({}),
 });
 
 export type BotState = z.infer<typeof stateSchema>;
@@ -74,7 +92,7 @@ export class StateStore {
 
   private load(): BotState {
     if (!existsSync(this.file)) {
-      return { version: 1, profile: this.profile, channels: {}, roles: {}, linkedMembers: {}, legendaryEncounters: {} };
+      return { version: 1, profile: this.profile, channels: {}, roles: {}, linkedMembers: {}, legendaryEncounters: {}, reportPosts: {} };
     }
     const parsed = stateSchema.parse(JSON.parse(readFileSync(this.file, "utf8")));
     if (parsed.profile !== this.profile) {

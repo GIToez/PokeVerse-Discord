@@ -6,6 +6,11 @@ import type {
   ChannelAccess,
   ChannelDirectory,
   ChannelSink,
+  ForumPostSink,
+  ForumPostSpec,
+  ForumSink,
+  ForumTag,
+  ForumTagSpec,
   GuildChannelInfo,
   GuildPort,
   MemberInfo,
@@ -160,8 +165,75 @@ export class FakeThread extends FakeChannel implements ThreadSink {
   }
 }
 
+export class FakePost extends FakeThread implements ForumPostSink {
+  tagIds: string[];
+  readonly updates: Array<{ tagIds?: string[]; name?: string; archived?: boolean }> = [];
+
+  constructor(id: string, public postName: string, spec: ForumPostSpec) {
+    super(id, postName, id);
+    this.tagIds = spec.tagIds;
+    this.sent.push({ id, message: spec.message });
+    this.existing.add(id);
+  }
+
+  async update(change: { tagIds?: string[]; name?: string; archived?: boolean }): Promise<void> {
+    this.updates.push(change);
+    if (change.tagIds !== undefined) {
+      this.tagIds = change.tagIds;
+    }
+    if (change.name !== undefined) {
+      this.postName = change.name;
+    }
+    if (change.archived !== undefined) {
+      this.archived = change.archived;
+    }
+  }
+}
+
+export class FakeForum implements ForumSink {
+  readonly posts = new Map<string, FakePost>();
+  private counter = 0;
+
+  constructor(readonly id: string, readonly forumTags: ForumTag[] = []) {}
+
+  static withTags(id: string, specs: ForumTagSpec[]): FakeForum {
+    return new FakeForum(id, specs.map((spec, index) => ({ id: `${id}-tag${index}`, name: spec.name })));
+  }
+
+  tags(): ForumTag[] {
+    return this.forumTags;
+  }
+
+  async createPost(spec: ForumPostSpec): Promise<{ threadId: string; messageId: string }> {
+    const id = `${this.id}-p${++this.counter}`;
+    this.posts.set(id, new FakePost(id, spec.name, spec));
+    return { threadId: id, messageId: id };
+  }
+
+  async post(threadId: string): Promise<ForumPostSink | undefined> {
+    return this.posts.get(threadId);
+  }
+
+  post0(): FakePost {
+    const post = [...this.posts.values()][0];
+    if (!post) {
+      throw new Error(`no post in ${this.id}`);
+    }
+    return post;
+  }
+
+  tagNames(post: FakePost): string[] {
+    return post.tagIds.map((id) => this.forumTags.find((tag) => tag.id === id)?.name ?? id);
+  }
+}
+
 export class FakeChannels implements ChannelDirectory {
   readonly channels = new Map<ChannelPurpose, FakeChannel>();
+  readonly forums = new Map<ChannelPurpose, FakeForum>();
+
+  forum(purpose: ChannelPurpose): FakeForum | undefined {
+    return this.forums.get(purpose);
+  }
 
   constructor(
     purposes: ChannelPurpose[] = ["gameChat", "catches", "shinySpawns", "legendarySpawns", "announcements", "serverStatus", "botCommands", "playerActivity"],
@@ -223,7 +295,33 @@ export class FakeGuild implements GuildPort {
   }
 
   async listChannels(): Promise<GuildChannelInfo[]> {
-    return this.channels.map(({ id, name, kind, parentId, topic }) => ({ id, name, kind, parentId, ...(kind === "text" ? { topic: topic ?? null } : {}) }));
+    return this.channels.map(({ id, name, kind, parentId, topic, tagNames }) => ({
+      id,
+      name,
+      kind,
+      parentId,
+      ...(kind === "text" || kind === "forum" ? { topic: topic ?? null } : {}),
+      ...(kind === "forum" ? { tagNames: [...(tagNames ?? [])] } : {}),
+    }));
+  }
+
+  async createForumChannel(
+    name: string,
+    parentId: string,
+    topic: string,
+    tags: ForumTagSpec[],
+    overwrites: PermissionOverwriteSpec[],
+  ): Promise<GuildChannelInfo> {
+    const info = this.create({ name, kind: "forum", parentId, topic, overwrites, tagNames: tags.map((tag) => tag.name) });
+    return { ...info, tagNames: tags.map((tag) => tag.name) };
+  }
+
+  async addForumTags(channelId: string, tags: ForumTagSpec[]): Promise<string[]> {
+    const channel = this.channels.find((item) => item.id === channelId)!;
+    const names = tags.map((tag) => tag.name);
+    channel.tagNames = [...(channel.tagNames ?? []), ...names];
+    this.channelUpdates.push(`tags ${channelId} ${names.join(",")}`);
+    return names;
   }
 
   async createCategory(name: string, overwrites: PermissionOverwriteSpec[]): Promise<GuildChannelInfo> {
