@@ -127,7 +127,7 @@ New settings, all optional, with these defaults when they are not in `.env.produ
 | `PLAYER_REPORTS_ENABLED` | `true` | Private `#player-reports` forum in Admin Logs (same viewers as `#player-activity`) |
 | `REPORT_MENTION_REPORTER` | `true` | Ping the linked reporter on their bug report's post |
 | `REPORT_TAG_SYNC` | `true` | A status tag picked on Discord changes the report in the game |
-| `BOOSTER_REWARDS_ENABLED` | `false` | Soul Coin rewards for server boosters in `#booster-rewards` (needs `LINKING_ENABLED`) |
+| `BOOSTER_REWARDS_ENABLED` | `true` | Soul Coin rewards for server boosters in `#booster-rewards` (needs `LINKING_ENABLED`) |
 | `BOOSTER_REMINDERS` | `true` | Remind an unlinked booster once to link their account |
 | `BOOSTER_MENTION` | `true` | Ping the booster on their reward post |
 | `DISCORD_MEMBERS_INTENT` | `false` | Instant role restore on rejoin; needs Server Members Intent in the Developer Portal |

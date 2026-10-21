@@ -122,7 +122,7 @@ export const envSchema = z.object({
   REPORT_MENTION_REPORTER: bool(true),
   REPORT_TAG_SYNC: bool(true),
 
-  BOOSTER_REWARDS_ENABLED: bool(false),
+  BOOSTER_REWARDS_ENABLED: bool(true),
   BOOSTER_REMINDERS: bool(true),
   BOOSTER_MENTION: bool(true),
 

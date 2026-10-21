@@ -178,9 +178,10 @@ describe("activity log and linking configuration", () => {
     expect(describeConfig(custom)).toMatchObject({ linking: false });
   });
 
-  it("keeps booster rewards off by default and only with account linking", () => {
-    expect(makeConfig().boosters).toEqual({ enabled: false, reminders: true, mention: true });
-    expect(describeConfig(makeConfig())).toMatchObject({ boosterRewards: false });
+  it("turns booster rewards on by default, only with account linking", () => {
+    expect(makeConfig().boosters).toEqual({ enabled: true, reminders: true, mention: true });
+    expect(describeConfig(makeConfig())).toMatchObject({ boosterRewards: { reminders: true, mention: true } });
+    expect(makeConfig({ BOOSTER_REWARDS_ENABLED: "false" }).boosters.enabled).toBe(false);
     expect(makeConfig({ BOOSTER_REWARDS_ENABLED: "true", BOOSTER_MENTION: "false" }).boosters).toEqual({ enabled: true, reminders: true, mention: false });
     expect(makeConfig({ BOOSTER_REWARDS_ENABLED: "true", LINKING_ENABLED: "false" }).boosters.enabled).toBe(false);
   });
