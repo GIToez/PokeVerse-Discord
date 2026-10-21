@@ -179,6 +179,10 @@ A linked reporter is pinged on their bug report's post and when its status chang
 ## Booster rewards
 
 With `BOOSTER_REWARDS_ENABLED=true`, setup creates the read-only `#booster-rewards` channel.
+Members cannot post there but can add reactions (setup allows Add Reactions to @everyone when it
+creates the channel; for a channel that already existed, allow it yourself). The bot's first
+post explains the rewards with the game's amounts; the bot edits it when the amounts change and
+posts it again if it is deleted.
 The bot sees a boost through the server's boost system message (it needs View Channel in the
 system messages channel, Server Settings → System Messages), the member's `/booster`, or the
 periodic link resync. Discord only tells bots when the member's current unbroken boost

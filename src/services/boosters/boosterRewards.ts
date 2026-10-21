@@ -12,6 +12,8 @@ import type { BoosterRecord, StateStore } from "../../utils/stateStore.js";
 export const DAY_MS = 86_400_000;
 export const WEEK_MS = 7 * DAY_MS;
 const RULES_TTL_MS = 10 * 60_000;
+/** The game's defaults (config.lua), shown in the info post until the game reports its own. */
+export const DEFAULT_BOOSTER_RULES: BoosterRules = { weekly: 1, loyaltyEvery: 4, loyalty: 1, yearlyEvery: 52, yearly: 15 };
 /** Discord's boost pink. */
 const BOOST_COLOR = 0xf47fff;
 
@@ -69,6 +71,7 @@ export class BoosterRewards {
   private chain: Promise<unknown> = Promise.resolve();
   private timer: NodeJS.Timeout | undefined;
   private cachedRules: { rules: BoosterRules; at: number } | undefined;
+  private infoChain: Promise<void> = Promise.resolve();
 
   constructor(private readonly options: BoosterRewardsOptions) {}
 
@@ -164,6 +167,52 @@ export class BoosterRewards {
     }
     lines.push("Removing or transferring your boost resets the streak.");
     return lines.join("\n");
+  }
+
+  /**
+   * Posts the "how it works" embed in #booster-rewards, or edits it when the amounts changed.
+   * Posted again if someone deleted it or the channel was reassigned.
+   */
+  ensureInfoPost(): Promise<void> {
+    this.infoChain = this.infoChain.then(() => this.writeInfoPost());
+    return this.infoChain;
+  }
+
+  private async writeInfoPost(): Promise<void> {
+    const sink = this.options.channels.get("boosterRewards");
+    if (!sink) {
+      return;
+    }
+    const rules = (await this.rules()) ?? DEFAULT_BOOSTER_RULES;
+    const embed = boosterInfoEmbed(rules);
+    const text = JSON.stringify(embed);
+    const saved = this.options.store.get().boosterInfo;
+    try {
+      if (saved?.channelId === sink.id) {
+        if (saved.text === text) {
+          return;
+        }
+        if (await sink.edit(saved.messageId, { embeds: [embed] })) {
+          this.options.store.update((state) => {
+            state.boosterInfo = { ...saved, text };
+          });
+          return;
+        }
+      }
+      const messageId = await sink.send({ embeds: [embed] });
+      this.options.store.update((state) => {
+        state.boosterInfo = { channelId: sink.id, messageId, text };
+      });
+      this.options.logger.info("Booster info post created", { channelId: sink.id });
+    } catch (error) {
+      this.options.logger.warn("Could not post the booster info", { error });
+    }
+  }
+
+  /** The game reconnected: its amounts may have changed. */
+  onConnected(): void {
+    this.cachedRules = undefined;
+    void this.ensureInfoPost();
   }
 
   private run<T>(task: () => Promise<T>): Promise<T | undefined> {
@@ -403,4 +452,53 @@ export class BoosterRewards {
       }
     });
   }
+}
+
+/** The first post in #booster-rewards: what boosters earn and how to get it. */
+export function boosterInfoEmbed(rules: BoosterRules): APIEmbed {
+  const fields: NonNullable<APIEmbed["fields"]> = [
+    { name: "💎 Every 7 days", value: `+${coins(rules.weekly)} for each full week of continuous boosting.` },
+  ];
+  if (rules.loyaltyEvery > 0 && rules.loyalty > 0) {
+    const perPeriod = rules.weekly * rules.loyaltyEvery + rules.loyalty;
+    fields.push({
+      name: rules.loyaltyEvery === 4 ? "🎁 Every 4 weeks (monthly)" : `🎁 Every ${rules.loyaltyEvery} weeks`,
+      value: `+${coins(rules.loyalty)} loyalty bonus, so **${coins(perPeriod)}** every ${rules.loyaltyEvery} weeks.`,
+    });
+  }
+  if (rules.yearlyEvery > 0 && rules.yearly > 0) {
+    const loyalties = rules.loyaltyEvery > 0 ? Math.floor(rules.yearlyEvery / rules.loyaltyEvery) * rules.loyalty : 0;
+    const perYear = rules.weekly * rules.yearlyEvery + loyalties + rules.yearly;
+    fields.push({
+      name: rules.yearlyEvery === 52 ? "🏆 Every year" : `🏆 Every ${rules.yearlyEvery} weeks`,
+      value: `+${coins(rules.yearly)} milestone bonus at week ${rules.yearlyEvery}, so **${coins(perYear)}** ` +
+        `${rules.yearlyEvery === 52 ? "in a full year" : `every ${rules.yearlyEvery} weeks`} of boosting.`,
+    });
+  }
+  fields.push(
+    {
+      name: "🔗 How to get them",
+      value: [
+        "1. In the game, type `!discord link` to get a code.",
+        "2. Use `/link` here with that code.",
+        "3. Boost the server. Your Soul Coins are deposited automatically and announced here.",
+        "Withdraw them at the bank in the game.",
+      ].join("\n"),
+    },
+    {
+      name: "📌 Good to know",
+      value: [
+        "• Only weeks completed while your account is linked are paid.",
+        "• Removing or transferring your boost resets the streak and the bonuses.",
+        "• One reward per member, however many boosts you have.",
+        "• `/booster` shows your streak and your next reward (only you can see it).",
+      ].join("\n"),
+    },
+  );
+  return {
+    title: "💜 PokeVerse Booster Rewards",
+    description: "Boost the PokeVerse Discord and earn **Soul Coins** on your game account. Thank you for supporting our community!",
+    color: BOOST_COLOR,
+    fields,
+  };
 }

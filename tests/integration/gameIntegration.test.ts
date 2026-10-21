@@ -314,8 +314,9 @@ describe("player activity and account linking pipeline", () => {
     await waitFor(() => weeks.length === 1, 3000, "booster deposit after the link resync");
     expect(weeks[0]).toEqual({ discordUserId: LINKED_USER, boostSince: Math.floor(since / 1000), week: 1 });
     const rewards = channels.channel("boosterRewards");
-    await waitFor(() => rewards.sent.length === 1, 3000, "reward post");
-    expect(rewards.sent[0]!.message.embeds![0]!.description).toContain("**Total Deposited: 1 Soul Coin**");
+    await waitFor(() => rewards.sent.length === 2, 3000, "info and reward posts");
+    expect(rewards.sent[0]!.message.embeds![0]!.title).toBe("💜 PokeVerse Booster Rewards");
+    expect(rewards.sent[1]!.message.embeds![0]!.description).toContain("**Total Deposited: 1 Soul Coin**");
     await waitFor(() => sink.sent.some((item) => item.message.embeds?.[0]?.title === "Booster reward"), 3000, "staff record");
     await integration.linking!.resyncAll();
     await integration.boosters!.idle();

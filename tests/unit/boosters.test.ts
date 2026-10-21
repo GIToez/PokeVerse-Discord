@@ -266,4 +266,45 @@ describe("booster rewards", () => {
     expect(text).toContain("Deposited this streak: **0 Soul Coins**");
     expect(at()).toBe(T0 + 10 * DAY_MS);
   });
+
+  describe("info post", () => {
+    const info = (channels: ReturnType<typeof setup>["channels"], index = 0) => channels.channel("boosterRewards").sent[index]?.message.embeds?.[0];
+
+    it("explains the rewards with the game's amounts and posts only once", async () => {
+      const { service, channels, store, api } = setup();
+      api.connected = false;
+      await service.ensureInfoPost();
+      await service.ensureInfoPost();
+      const sink = channels.channel("boosterRewards");
+      expect(sink.sent).toHaveLength(1);
+      expect(sink.sent[0]!.message.content).toBeUndefined();
+      const embed = info(channels)!;
+      expect(embed.title).toBe("💜 PokeVerse Booster Rewards");
+      const fields = Object.fromEntries((embed.fields ?? []).map((field) => [field.name, field.value]));
+      expect(fields["💎 Every 7 days"]).toBe("+1 Soul Coin for each full week of continuous boosting.");
+      expect(fields["🎁 Every 4 weeks (monthly)"]).toBe("+1 Soul Coin loyalty bonus, so **5 Soul Coins** every 4 weeks.");
+      expect(fields["🏆 Every year"]).toBe("+15 Soul Coins milestone bonus at week 52, so **80 Soul Coins** in a full year of boosting.");
+      expect(fields["🔗 How to get them"]).toContain("`!discord link`");
+      expect(fields["📌 Good to know"]).toContain("resets the streak");
+      expect(store.get().boosterInfo).toMatchObject({ channelId: sink.id, messageId: sink.sent[0]!.id });
+    });
+
+    it("edits the post when the game's amounts change, and posts again when it was deleted", async () => {
+      const { service, channels, api } = setup();
+      await service.ensureInfoPost();
+      const sink = channels.channel("boosterRewards");
+      api.rulesValue = { weekly: 2, loyaltyEvery: 4, loyalty: 0, yearlyEvery: 0, yearly: 0 };
+      service.onConnected();
+      await service.ensureInfoPost();
+      expect(sink.sent).toHaveLength(1);
+      expect(sink.edits).toHaveLength(1);
+      const fields = sink.edits[0]!.message.embeds![0]!.fields!.map((field) => field.name);
+      expect(fields).toEqual(["💎 Every 7 days", "🔗 How to get them", "📌 Good to know"]);
+      await sink.delete(sink.sent[0]!.id);
+      api.rulesValue = { weekly: 1, loyaltyEvery: 4, loyalty: 1, yearlyEvery: 52, yearly: 15 };
+      service.onConnected();
+      await service.ensureInfoPost();
+      expect(sink.sent).toHaveLength(2);
+    });
+  });
 });

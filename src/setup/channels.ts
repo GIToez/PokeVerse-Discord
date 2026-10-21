@@ -12,6 +12,8 @@ export interface ChannelDefinition {
   topic: string;
   /** Members can read but not post (the bot posts). */
   readOnly: boolean;
+  /** Allowed to @everyone when setup creates the channel (reactions in a read-only channel). */
+  everyoneAllow?: PermissionName[];
   /** Permissions the bot needs in this channel to work. */
   required: PermissionName[];
   /** Earlier default topics; setup replaces them with `topic`, but never a topic someone wrote. */
@@ -101,6 +103,7 @@ export const CHANNEL_DEFINITIONS: readonly ChannelDefinition[] = [
     topic: "Thank you, boosters! Every 7 days of continuous boosting earns Soul Coins on your linked game account, " +
       "with loyalty and yearly bonuses. Link your account with /link and check your streak with /booster.",
     readOnly: true,
+    everyoneAllow: ["AddReactions", "ReadMessageHistory"],
     required: POST,
     group: "main",
     feature: "boosterRewards",

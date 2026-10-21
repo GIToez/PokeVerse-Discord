@@ -249,8 +249,13 @@ export class ChannelSetup {
     const overwrites: PermissionOverwriteSpec[] = [
       { id: guild.botUserId, type: "member", allow: definition.required, deny: [] },
     ];
-    if (definition.readOnly) {
-      overwrites.push({ id: guild.everyoneRoleId, type: "role", allow: [], deny: ["SendMessages"] });
+    if (definition.readOnly || definition.everyoneAllow) {
+      overwrites.push({
+        id: guild.everyoneRoleId,
+        type: "role",
+        allow: definition.everyoneAllow ?? [],
+        deny: definition.readOnly ? ["SendMessages"] : [],
+      });
     }
     return overwrites;
   }

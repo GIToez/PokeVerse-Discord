@@ -239,7 +239,10 @@ export class GameIntegration {
       announcer: this.announcer,
       store,
       guild: options.guild,
-      onSettingsChanged: () => void this.status.render(),
+      onSettingsChanged: () => {
+        void this.status.render();
+        void this.boosters?.ensureInfoPost();
+      },
       queueSizes: () => this.queueSizes(),
       logger: logger.child({ component: "commands" }),
       metrics,
@@ -275,6 +278,7 @@ export class GameIntegration {
     this.activity?.start();
     this.linking?.start();
     this.boosters?.start();
+    void this.boosters?.ensureInfoPost();
   }
 
   async stop(): Promise<void> {
@@ -376,6 +380,7 @@ export class GameIntegration {
       this.options.logger.warn("Status update after connect failed", { error });
     });
     this.activity?.onConnected(info);
+    this.boosters?.onConnected();
     const linking = this.linking;
     if (linking) {
       clearTimeout(this.resyncTimer);

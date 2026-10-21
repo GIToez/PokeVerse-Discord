@@ -47,7 +47,7 @@ describe("channel setup", () => {
     expect(report.ok).toBe(true);
     const channel = guild.created.find((item) => item.name === "booster-rewards")!;
     expect(channel.parentId).toBe(store.get().categoryId);
-    expect(channel.overwrites).toContainEqual({ id: EVERYONE, type: "role", allow: [], deny: ["SendMessages"] });
+    expect(channel.overwrites).toContainEqual({ id: EVERYONE, type: "role", allow: ["AddReactions", "ReadMessageHistory"], deny: ["SendMessages"] });
     expect(store.getChannelId("boosterRewards")).toBe(channel.id);
     expect((await setup().setup.run(new FakeGuild())).channels.some((item) => item.purpose === "boosterRewards")).toBe(false);
   });

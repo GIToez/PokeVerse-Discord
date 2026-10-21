@@ -90,6 +90,8 @@ const stateSchema = z.object({
   reportPosts: z.record(reportPostSchema).default({}),
   /** Members seen boosting the server, by Discord user id (booster rewards). */
   boosters: z.record(boosterSchema).default({}),
+  /** The "how booster rewards work" post in #booster-rewards; `text` is what it shows now. */
+  boosterInfo: z.object({ channelId: z.string(), messageId: z.string(), text: z.string() }).optional(),
 });
 
 export type BotState = z.infer<typeof stateSchema>;

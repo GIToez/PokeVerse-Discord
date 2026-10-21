@@ -119,6 +119,7 @@ lost bot state file or a re-run never pays twice.
   a new boost starts at week 1 again.
 - Weeks are only paid while linked. An unlinked booster gets one reminder in
   `#booster-rewards` to link with `/link`, and one note when a week went unpaid.
+- The first post in `#booster-rewards` explains the rewards; members can react but not post.
 - Each payout is posted in `#booster-rewards` and in the staff log.
 - `/booster` shows the member's streak and when the next week is due.
 
