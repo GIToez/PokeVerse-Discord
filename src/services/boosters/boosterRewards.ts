@@ -420,7 +420,7 @@ export class BoosterRewards {
       title: "🎉 PokeVerse Booster Reward",
       description: lines.join("\n"),
       color: BOOST_COLOR,
-      footer: { text: "Withdraw your Soul Coins at the bank in the game. Check your streak with /booster." },
+      footer: { text: "Withdraw your Soul Coins in the store in the game. Check your streak with /booster." },
     };
   }
 
@@ -482,7 +482,7 @@ export function boosterInfoEmbed(rules: BoosterRules): APIEmbed {
         "1. In the game, type `!discord link` to get a code.",
         "2. Use `/link` here with that code.",
         "3. Boost the server. Your Soul Coins are deposited automatically and announced here.",
-        "Withdraw them at the bank in the game.",
+        "Withdraw them in the store in the game.",
       ].join("\n"),
     },
     {

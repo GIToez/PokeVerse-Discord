@@ -102,7 +102,7 @@ posts follow the same privacy check and retention as login posts ([PRIVACY.md](P
 ## Booster rewards
 
 On by default (`BOOSTER_REWARDS_ENABLED`; needs a game server with `boosterRewards`). A member who boosts the server earns Soul Coins on
-their linked game account, deposited by the game (withdraw at the bank):
+their linked game account, deposited by the game (withdraw them in the store in the game):
 
 | Week | Soul Coins |
 | --- | --- |
