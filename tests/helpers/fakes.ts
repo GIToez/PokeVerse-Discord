@@ -27,6 +27,7 @@ import type { AdminApi, BoosterApi, GameApi, LinkApi } from "../../src/integrati
 import {
   FEATURES,
   type AdminSessionsResult,
+  type BoostLevelResult,
   type BoosterRules,
   type BoosterWeekResult,
   type BridgeConfigResult,
@@ -468,6 +469,13 @@ export class FakeGuild implements GuildPort {
     const member = this.memberOp(userId, `nick ${userId} ${nickname ?? "<reset>"}`);
     member.nickname = nickname;
   }
+
+  boostCount = 0;
+  boostLevel = 0;
+
+  boosts(): { count: number; level: number } {
+    return { count: this.boostCount, level: this.boostLevel };
+  }
 }
 
 export type FakeRole = RoleInfo;
@@ -747,8 +755,13 @@ export function envelope<E extends GameEvent>(event: E, options: { time?: number
  */
 export class FakeBoosterApi implements BoosterApi {
   connected = true;
-  features = new Set<string>([FEATURES.boosterRewards]);
-  rulesValue: BoosterRules = { weekly: 1, loyaltyEvery: 4, loyalty: 1, yearlyEvery: 52, yearly: 15 };
+  features = new Set<string>([FEATURES.boosterRewards, FEATURES.boostPerks]);
+  rulesValue: BoosterRules = {
+    weekly: 1, loyaltyEvery: 4, loyalty: 1, yearlyEvery: 52, yearly: 15, communityEvery: 5, communityMax: 5,
+    perks: [{ level: 1, text: "+5% experience" }, { level: 2, text: "+5% catch rate" }, { level: 3, text: "+10% shiny spawn rate" }],
+  };
+  /** Levels sent with boost.level, in order. */
+  readonly levels: Array<{ level: number; boosts: number }> = [];
   /** Paid weeks by `${user}:${boostSince}:${week}`, with the time they were paid (unix seconds). */
   readonly ledger = new Map<string, BoosterWeekResult & { user: string; boostSince: number; paidAt: number }>();
   readonly calls: string[] = [];
@@ -778,7 +791,13 @@ export class FakeBoosterApi implements BoosterApi {
     return this.rulesValue;
   }
 
-  async week(discordUserId: string, boostSince: number, week: number): Promise<BoosterWeekResult> {
+  async level(level: number, boosts: number): Promise<BoostLevelResult> {
+    this.guard("boost.level");
+    this.levels.push({ level, boosts });
+    return { level, perks: this.rulesValue.perks.filter((perk) => perk.level <= level).map((perk) => perk.text) };
+  }
+
+  async week(discordUserId: string, boostSince: number, week: number, serverBoosts = 0): Promise<BoosterWeekResult> {
     this.guard(`booster.week ${discordUserId} ${week}`);
     const now = Math.floor(this.now() / 1000);
     const linkedAt = this.linkedAt.get(discordUserId);
@@ -804,7 +823,10 @@ export class FakeBoosterApi implements BoosterApi {
     const rules = this.rulesValue;
     const loyalty = rules.loyaltyEvery > 0 && week % rules.loyaltyEvery === 0 ? rules.loyalty : 0;
     const yearly = rules.yearlyEvery > 0 && week % rules.yearlyEvery === 0 ? rules.yearly : 0;
-    const result = { deposited: true, week, weekly: rules.weekly, loyalty, yearly, total: rules.weekly + loyalty + yearly };
+    const community = rules.loyaltyEvery > 0 && week % rules.loyaltyEvery === 0 && rules.communityEvery > 0
+      ? Math.min(rules.communityMax, Math.floor(serverBoosts / rules.communityEvery))
+      : 0;
+    const result = { deposited: true, week, weekly: rules.weekly, loyalty, yearly, community, total: rules.weekly + loyalty + yearly + community };
     this.ledger.set(`${discordUserId}:${boostSince}:${week}`, { ...result, user: discordUserId, boostSince, paidAt: now });
     return result;
   }

@@ -13,7 +13,23 @@ export const DAY_MS = 86_400_000;
 export const WEEK_MS = 7 * DAY_MS;
 const RULES_TTL_MS = 10 * 60_000;
 /** The game's defaults (config.lua), shown in the info post until the game reports its own. */
-export const DEFAULT_BOOSTER_RULES: BoosterRules = { weekly: 1, loyaltyEvery: 4, loyalty: 1, yearlyEvery: 52, yearly: 15 };
+export const DEFAULT_BOOSTER_RULES: BoosterRules = {
+  weekly: 1,
+  loyaltyEvery: 4,
+  loyalty: 1,
+  yearlyEvery: 52,
+  yearly: 15,
+  communityEvery: 5,
+  communityMax: 5,
+  perks: [
+    { level: 1, text: "+5% experience" },
+    { level: 2, text: "+5% catch rate" },
+    { level: 3, text: "+10% shiny spawn rate" },
+  ],
+};
+/** Boosts Discord needs for server boost level 1, 2 and 3 (only used for "N more boosts" hints). */
+export const BOOST_LEVEL_BOOSTS = [0, 2, 7, 14] as const;
+const BOOSTS_SETTLE_MS = 5000;
 /** Discord's boost pink. */
 const BOOST_COLOR = 0xf47fff;
 
@@ -24,6 +40,10 @@ export interface BoosterReward {
   weekly: number;
   loyalty: number;
   yearly: number;
+  /** Community bonus (server boosts) on loyalty weeks. */
+  community: number;
+  /** Server boost count sent with the last week paid. */
+  serverBoosts: number;
   total: number;
   streakDays: number;
   /** Soul Coins deposited in this streak so far, including this reward. */
@@ -43,6 +63,8 @@ export interface BoosterRewardsOptions {
   /** Told about every deposit (staff activity log). */
   onReward?: (reward: BoosterReward) => void;
   now?: () => number;
+  /** Wait after a server boost change before acting, so a burst of boosts is one update. */
+  boostsSettleMs?: number;
 }
 
 /** "unknown": the game could not be asked, so the link state is not known right now. */
@@ -50,6 +72,50 @@ type LinkState = LinkSummary | undefined | "unknown";
 
 function coins(amount: number): string {
   return `${amount} Soul Coin${amount === 1 ? "" : "s"}`;
+}
+
+function boostsText(count: number): string {
+  return `${count} boost${count === 1 ? "" : "s"}`;
+}
+
+/** The community bonus a loyalty week pays at `boosts` server boosts. */
+export function communityBonus(rules: BoosterRules, boosts: number): number {
+  return rules.communityEvery > 0 ? Math.min(rules.communityMax, Math.floor(boosts / rules.communityEvery)) : 0;
+}
+
+function communityEnabled(rules: BoosterRules): boolean {
+  return rules.communityEvery > 0 && rules.communityMax > 0 && rules.loyaltyEvery > 0;
+}
+
+/** "Right now: 14 boosts give +2. 1 more boost for +3." */
+function communityNow(rules: BoosterRules, boosts: number): string {
+  const bonus = communityBonus(rules, boosts);
+  const now = `Right now: **${boostsText(boosts)}** give **+${coins(bonus)}**.`;
+  if (bonus >= rules.communityMax) {
+    return `${now} That is the maximum!`;
+  }
+  const more = (bonus + 1) * rules.communityEvery - boosts;
+  return `${now} ${more} more boost${more === 1 ? "" : "s"} for +${bonus + 1}.`;
+}
+
+function perksAt(rules: BoosterRules, level: number): string[] {
+  return rules.perks.filter((perk) => perk.level <= level).map((perk) => perk.text);
+}
+
+function perksOf(rules: BoosterRules, level: number): string {
+  return rules.perks.filter((perk) => perk.level === level).map((perk) => perk.text).join(", ");
+}
+
+/** "5 more boosts unlock Level 3: +10% shiny spawn rate." (empty at level 3). */
+function nextLevelText(rules: BoosterRules, boosts: { count: number; level: number }, verb: "unlock" | "bring back"): string {
+  const next = boosts.level + 1;
+  if (next > 3) {
+    return "";
+  }
+  const more = Math.max(1, BOOST_LEVEL_BOOSTS[next]! - boosts.count);
+  const perks = perksOf(rules, next);
+  const conjugated = more === 1 ? (verb === "unlock" ? "unlocks" : "brings back") : verb;
+  return `${more} more boost${more === 1 ? "" : "s"} ${conjugated} Level ${next}${perks ? `: ${perks}` : ""}.`;
 }
 
 /**
@@ -72,6 +138,8 @@ export class BoosterRewards {
   private timer: NodeJS.Timeout | undefined;
   private cachedRules: { rules: BoosterRules; at: number } | undefined;
   private infoChain: Promise<void> = Promise.resolve();
+  private boostsTimer: NodeJS.Timeout | undefined;
+  private boostsChain: Promise<void> = Promise.resolve();
 
   constructor(private readonly options: BoosterRewardsOptions) {}
 
@@ -83,7 +151,13 @@ export class BoosterRewards {
     return this.options.api.connected && this.options.api.hasFeature(FEATURES.boosterRewards);
   }
 
+  /** The game applies the server-wide boost level perks. */
+  get perksAvailable(): boolean {
+    return this.options.api.connected && this.options.api.hasFeature(FEATURES.boostPerks);
+  }
+
   start(): void {
+    void this.refreshServerBoosts();
     if (this.options.config.checkMinutes > 0) {
       this.timer = setInterval(() => void this.checkUnlinked(), this.options.config.checkMinutes * 60_000);
       this.timer.unref();
@@ -92,6 +166,44 @@ export class BoosterRewards {
 
   stop(): void {
     clearInterval(this.timer);
+    clearTimeout(this.boostsTimer);
+  }
+
+  /** Discord changed the server's boost count or level. */
+  onServerBoostsChanged(): void {
+    clearTimeout(this.boostsTimer);
+    this.boostsTimer = setTimeout(() => void this.refreshServerBoosts(), this.options.boostsSettleMs ?? BOOSTS_SETTLE_MS);
+    this.boostsTimer.unref();
+  }
+
+  /**
+   * Announces a level change, tells the game the level for its perks and updates the info
+   * post (the live tracker). The first run only records the level.
+   */
+  refreshServerBoosts(): Promise<void> {
+    this.boostsChain = this.boostsChain.then(async () => {
+      const guild = this.options.guild();
+      if (!guild) {
+        return;
+      }
+      const boosts = guild.boosts();
+      const saved = this.options.store.get().boostLevel;
+      if (saved?.level !== boosts.level || saved.boosts !== boosts.count) {
+        this.options.store.update((state) => {
+          state.boostLevel = { level: boosts.level, boosts: boosts.count };
+        });
+      }
+      if (saved && saved.level !== boosts.level) {
+        this.options.logger.info("Server boost level changed", { from: saved.level, to: boosts.level, boosts: boosts.count });
+        this.options.metrics.increment("boosters.level_changes");
+        this.postLevelChange(saved.level, boosts, (await this.rules()) ?? DEFAULT_BOOSTER_RULES);
+      }
+      await this.sendLevel(boosts);
+      await this.ensureInfoPost();
+    }).catch((error: unknown) => {
+      this.options.logger.warn("Server boost update failed", { error });
+    });
+    return this.boostsChain;
   }
 
   /** Resolves when the queued work is done (used by tests). */
@@ -152,7 +264,8 @@ export class BoosterRewards {
       lines.push(`💎 Next weekly reward: ${due(nextWeek)}${rules ? ` (+${coins(rules.weekly)})` : ""}`);
       if (rules && rules.loyaltyEvery > 0 && rules.loyalty > 0) {
         const week = Math.ceil(nextWeek / rules.loyaltyEvery) * rules.loyaltyEvery;
-        lines.push(`🎁 Next loyalty bonus: ${due(week)} (+${coins(rules.loyalty)})`);
+        const community = communityEnabled(rules) ? communityBonus(rules, guild.boosts().count) : 0;
+        lines.push(`🎁 Next loyalty bonus: ${due(week)} (+${coins(rules.loyalty)}${community > 0 ? `, +${community} community bonus` : ""})`);
       }
       if (rules && rules.yearlyEvery > 0 && rules.yearly > 0) {
         const week = Math.ceil(nextWeek / rules.yearlyEvery) * rules.yearlyEvery;
@@ -165,6 +278,8 @@ export class BoosterRewards {
           : "The game server is offline; your rewards are deposited when it is back.");
       }
     }
+    const boosts = guild.boosts();
+    lines.push(`🤝 The server has **${boostsText(boosts.count)}** (Server Boost Level ${boosts.level}).`);
     lines.push("Removing or transferring your boost resets the streak.");
     return lines.join("\n");
   }
@@ -184,7 +299,7 @@ export class BoosterRewards {
       return;
     }
     const rules = (await this.rules()) ?? DEFAULT_BOOSTER_RULES;
-    const embed = boosterInfoEmbed(rules);
+    const embed = boosterInfoEmbed(rules, this.options.guild()?.boosts() ?? { count: 0, level: 0 });
     const text = JSON.stringify(embed);
     const saved = this.options.store.get().boosterInfo;
     try {
@@ -209,10 +324,45 @@ export class BoosterRewards {
     }
   }
 
-  /** The game reconnected: its amounts may have changed. */
+  /** The game reconnected: its amounts may have changed, and it needs the boost level. */
   onConnected(): void {
     this.cachedRules = undefined;
-    void this.ensureInfoPost();
+    void this.refreshServerBoosts();
+  }
+
+  private async sendLevel(boosts: { count: number; level: number }): Promise<void> {
+    if (!this.perksAvailable) {
+      return;
+    }
+    try {
+      const result = await this.options.api.level(boosts.level, boosts.count);
+      this.options.metrics.increment("boosters.level_sent");
+      this.options.logger.debug("Server boost level sent to the game", { level: result.level, perks: result.perks });
+    } catch (error) {
+      this.options.logger.warn("Could not send the server boost level to the game", { error });
+    }
+  }
+
+  private postLevelChange(from: number, boosts: { count: number; level: number }, rules: BoosterRules): void {
+    const perks = perksAt(rules, boosts.level);
+    const list = perks.length > 0 ? perks.map((perk) => `• ${perk}`).join("\n") : "No boost perks are active.";
+    const up = boosts.level > from;
+    const next = nextLevelText(rules, boosts, up ? "unlock" : "bring back");
+    const description = up
+      ? `Thanks to **${boostsText(boosts.count)}**, everyone in the game now gets:\n${list}`
+      : `The server has **${boostsText(boosts.count)}** now. Active in the game:\n${list}`;
+    const embed: APIEmbed = {
+      title: up ? `🚀 PokeVerse reached Server Boost Level ${boosts.level}!` : `Server Boost Level dropped to ${boosts.level}`,
+      description: next ? `${description}\n\n${next}` : description,
+      color: BOOST_COLOR,
+    };
+    this.options.queue.enqueue("boost level", async () => {
+      const sink = this.options.channels.get("boosterRewards");
+      if (sink) {
+        await sink.send({ embeds: [embed] });
+        this.options.metrics.increment("boosters.posted");
+      }
+    });
   }
 
   private run<T>(task: () => Promise<T>): Promise<T | undefined> {
@@ -269,6 +419,9 @@ export class BoosterRewards {
     if (rules.loyaltyEvery > 0 && rules.loyalty > 0) {
       parts.push(`+${coins(rules.loyalty)} every ${rules.loyaltyEvery} weeks`);
     }
+    if (communityEnabled(rules)) {
+      parts.push(`+1 more on those weeks for every ${rules.communityEvery} server boosts (up to +${rules.communityMax})`);
+    }
     if (rules.yearlyEvery > 0 && rules.yearly > 0) {
       parts.push(`+${coins(rules.yearly)} every ${rules.yearlyEvery === 52 ? "year" : `${rules.yearlyEvery} weeks`}`);
     }
@@ -316,21 +469,24 @@ export class BoosterRewards {
 
   private async pay(discordUserId: string, record: BoosterRecord, link: LinkSummary, dueWeeks: number): Promise<void> {
     const reward: BoosterReward = {
-      discordUserId, weeks: [], weekly: 0, loyalty: 0, yearly: 0, total: 0, streakDays: 0, streakTotal: 0,
+      discordUserId, weeks: [], weekly: 0, loyalty: 0, yearly: 0, community: 0, serverBoosts: 0, total: 0, streakDays: 0, streakTotal: 0,
     };
+    const serverBoosts = this.options.guild()?.boosts().count ?? 0;
     for (let week = record.paidWeek + 1; week <= dueWeeks; week++) {
       if (record.since + week * WEEK_MS < link.linkedAt * 1000) {
         record.paidWeek = week;
         continue;
       }
       try {
-        const result = await this.options.api.week(discordUserId, Math.floor(record.since / 1000), week);
+        const result = await this.options.api.week(discordUserId, Math.floor(record.since / 1000), week, serverBoosts);
         record.paidWeek = week;
         record.total += result.total;
         reward.weeks.push(week);
         reward.weekly += result.weekly;
         reward.loyalty += result.loyalty;
         reward.yearly += result.yearly;
+        reward.community += result.community;
+        reward.serverBoosts = serverBoosts;
         reward.total += result.total;
         this.options.metrics.increment(result.deposited ? "boosters.deposits" : "boosters.deposits_already_paid");
       } catch (error) {
@@ -411,6 +567,9 @@ export class BoosterRewards {
     if (reward.loyalty > 0) {
       lines.push(`🎁 Loyalty Bonus: +${coins(reward.loyalty)}`);
     }
+    if (reward.community > 0) {
+      lines.push(`🤝 Community Bonus (${boostsText(reward.serverBoosts)}): +${coins(reward.community)}`);
+    }
     if (reward.yearly > 0) {
       const years = Math.max(1, Math.round((reward.weeks[reward.weeks.length - 1]! * 7) / 365));
       lines.push(`🏆 ${years} Year Milestone: +${coins(reward.yearly)}`);
@@ -454,8 +613,12 @@ export class BoosterRewards {
   }
 }
 
-/** The first post in #booster-rewards: what boosters earn and how to get it. */
-export function boosterInfoEmbed(rules: BoosterRules): APIEmbed {
+/**
+ * The first post in #booster-rewards and its live tracker: what boosters earn, the community
+ * bonus and the server-wide perks at the server's current boosts.
+ */
+export function boosterInfoEmbed(rules: BoosterRules, boosts: { count: number; level: number }): APIEmbed {
+  const community = communityEnabled(rules);
   const fields: NonNullable<APIEmbed["fields"]> = [
     { name: "💎 Every 7 days", value: `+${coins(rules.weekly)} for each full week of continuous boosting.` },
   ];
@@ -463,7 +626,17 @@ export function boosterInfoEmbed(rules: BoosterRules): APIEmbed {
     const perPeriod = rules.weekly * rules.loyaltyEvery + rules.loyalty;
     fields.push({
       name: rules.loyaltyEvery === 4 ? "🎁 Every 4 weeks (monthly)" : `🎁 Every ${rules.loyaltyEvery} weeks`,
-      value: `+${coins(rules.loyalty)} loyalty bonus, so **${coins(perPeriod)}** every ${rules.loyaltyEvery} weeks.`,
+      value: `+${coins(rules.loyalty)} loyalty bonus, so **${coins(perPeriod)}** every ${rules.loyaltyEvery} weeks` +
+        `${community ? ", plus the community bonus" : ""}.`,
+    });
+  }
+  if (community) {
+    const full = rules.communityMax * rules.communityEvery;
+    fields.push({
+      name: "🤝 Community bonus",
+      value: `Every ${rules.loyaltyEvery === 4 ? "4th week" : `${rules.loyaltyEvery}th week`}, +1 Soul Coin for every ` +
+        `${rules.communityEvery} boosts on the server, up to +${rules.communityMax} (at ${full} boosts). Everyone's boosts count!\n` +
+        communityNow(rules, boosts.count),
     });
   }
   if (rules.yearlyEvery > 0 && rules.yearly > 0) {
@@ -472,7 +645,21 @@ export function boosterInfoEmbed(rules: BoosterRules): APIEmbed {
     fields.push({
       name: rules.yearlyEvery === 52 ? "🏆 Every year" : `🏆 Every ${rules.yearlyEvery} weeks`,
       value: `+${coins(rules.yearly)} milestone bonus at week ${rules.yearlyEvery}, so **${coins(perYear)}** ` +
-        `${rules.yearlyEvery === 52 ? "in a full year" : `every ${rules.yearlyEvery} weeks`} of boosting.`,
+        `${rules.yearlyEvery === 52 ? "in a full year" : `every ${rules.yearlyEvery} weeks`} of boosting` +
+        `${community ? ", plus community bonuses" : ""}.`,
+    });
+  }
+  if (rules.perks.length > 0) {
+    const levels = [1, 2, 3].filter((level) => perksOf(rules, level));
+    const next = nextLevelText(rules, boosts, "unlock");
+    fields.push({
+      name: "🚀 Server boost perks (everyone in the game)",
+      value: [
+        ...levels.map((level) =>
+          `${boosts.level >= level ? "✅" : "🔒"} Level ${level} (${boostsText(BOOST_LEVEL_BOOSTS[level]!)}): ${perksOf(rules, level)}`),
+        "",
+        `The server is **Level ${boosts.level}** with **${boostsText(boosts.count)}**.${next ? ` ${next}` : " Every perk is active!"}`,
+      ].join("\n"),
     });
   }
   fields.push(
@@ -500,5 +687,6 @@ export function boosterInfoEmbed(rules: BoosterRules): APIEmbed {
     description: "Boost the PokeVerse Discord and earn **Soul Coins** on your game account. Thank you for supporting our community!",
     color: BOOST_COLOR,
     fields,
+    footer: { text: "This post updates itself when the server's boosts change." },
   };
 }

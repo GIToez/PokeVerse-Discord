@@ -108,7 +108,26 @@ their linked game account, deposited by the game (withdraw them in the store in 
 | --- | --- |
 | Every 7 days of continuous boosting | 1 |
 | Every 4th week (loyalty) | +1, so 5 per 4 weeks |
+| Every 4th week (community bonus) | +1 for every 5 boosts on the server (all members together), up to +5 at 25 boosts |
 | Week 52, 104, … (yearly milestone) | +15 |
+
+The community bonus uses the server's boost count when the week is paid. Discord shows
+bots the server's total boosts, not who owns them, so everyone's boosts raise it for all.
+
+### Server boost perks
+
+While the server holds a boost level, the game gives everyone online a perk (each level keeps
+the ones below; game feature `boostPerks`):
+
+| Server boost level | Boosts | Perk |
+| --- | --- | --- |
+| 1 | 2 | +5% experience |
+| 2 | 7 | +5% catch rate (multiplied: 40% becomes 42%) |
+| 3 | 14 | +10% shiny spawn rate (multiplied) |
+
+The bot tells the game the level at startup, when the game connects and when Discord
+reports a change; the game keeps the last level it was told. A level change is announced in
+`#booster-rewards`.
 
 The amounts are set in the game's `config.lua`; the bot only reports which week of which
 boost is complete. The game refuses a week that is not due yet, that was due before the
@@ -119,9 +138,11 @@ lost bot state file or a re-run never pays twice.
   a new boost starts at week 1 again.
 - Weeks are only paid while linked. An unlinked booster gets one reminder in
   `#booster-rewards` to link with `/link`, and one note when a week went unpaid.
-- The first post in `#booster-rewards` explains the rewards; members can react but not post.
+- The first post in `#booster-rewards` explains the rewards and is a live tracker: the bot
+  edits it with the server's boosts, the community bonus now and the active perks. Members
+  can react but not post.
 - Each payout is posted in `#booster-rewards` and in the staff log.
-- `/booster` shows the member's streak and when the next week is due.
+- `/booster` shows the member's streak, when the next week is due and the server's boosts.
 
 ## Recovery
 

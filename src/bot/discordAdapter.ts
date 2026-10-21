@@ -479,4 +479,8 @@ export class DiscordGuildPort implements GuildPort {
   async setNickname(userId: string, nickname: string | null, reason: string): Promise<void> {
     await this.guild.members.edit(userId, { nick: nickname, reason });
   }
+
+  boosts(): { count: number; level: number } {
+    return { count: this.guild.premiumSubscriptionCount ?? 0, level: this.guild.premiumTier };
+  }
 }

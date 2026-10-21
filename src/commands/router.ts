@@ -344,6 +344,11 @@ export class CommandRouter {
     }
     const boosters = this.options.boosters;
     lines.push(`Booster rewards: **${!boosters ? "off" : boosters.available ? "available" : game.connected ? "not supported by the game server" : "game offline"}**`);
+    if (boosters && guild) {
+      const { count, level } = guild.boosts();
+      const perks = boosters.perksAvailable ? "applied in the game" : game.connected ? "not supported by the game server" : "game offline";
+      lines.push(`Server boosts: **${count}** (Level ${level}); boost perks: **${perks}**`);
+    }
     if (guild) {
       const report = await this.options.setup.inspect(guild);
       lines.push("", formatSetupReport(report));

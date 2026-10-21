@@ -139,6 +139,12 @@ export class BotApp {
           boosters.onBoostMessage(message.author.id);
         }
       });
+      client.on(Events.GuildUpdate, (before, after) => {
+        if (after.id === config.discord.guildId &&
+          (before.premiumSubscriptionCount !== after.premiumSubscriptionCount || before.premiumTier !== after.premiumTier)) {
+          boosters.onServerBoostsChanged();
+        }
+      });
     }
     client.on(Events.InteractionCreate, createInteractionHandler(this.integration.commands, logger.child({ component: "commands" })));
     client.on(Events.ThreadUpdate, (before, after) => void this.onThreadUpdate(before, after));

@@ -312,7 +312,7 @@ describe("player activity and account linking pipeline", () => {
       },
     });
     await waitFor(() => weeks.length === 1, 3000, "booster deposit after the link resync");
-    expect(weeks[0]).toEqual({ discordUserId: LINKED_USER, boostSince: Math.floor(since / 1000), week: 1 });
+    expect(weeks[0]).toEqual({ discordUserId: LINKED_USER, boostSince: Math.floor(since / 1000), week: 1, serverBoosts: 0 });
     const rewards = channels.channel("boosterRewards");
     await waitFor(() => rewards.sent.length === 2, 3000, "info and reward posts");
     expect(rewards.sent[0]!.message.embeds![0]!.title).toBe("💜 PokeVerse Booster Rewards");

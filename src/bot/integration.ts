@@ -278,7 +278,6 @@ export class GameIntegration {
     this.activity?.start();
     this.linking?.start();
     this.boosters?.start();
-    void this.boosters?.ensureInfoPost();
   }
 
   async stop(): Promise<void> {

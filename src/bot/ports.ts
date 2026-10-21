@@ -178,4 +178,6 @@ export interface GuildPort {
   addRole(userId: string, roleId: string, reason: string): Promise<void>;
   removeRole(userId: string, roleId: string, reason: string): Promise<void>;
   setNickname(userId: string, nickname: string | null, reason: string): Promise<void>;
+  /** Active server boosts (all members together) and the server boost level, 0-3. */
+  boosts(): { count: number; level: number };
 }

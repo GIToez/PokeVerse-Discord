@@ -91,6 +91,8 @@ const stateSchema = z.object({
   /** Members seen boosting the server, by Discord user id (booster rewards). */
   boosters: z.record(boosterSchema).default({}),
   /** The "how booster rewards work" post in #booster-rewards; `text` is what it shows now. */
+  /** The server boost level and count last seen, to announce level changes. */
+  boostLevel: z.object({ level: z.number().int(), boosts: z.number().int() }).optional(),
   boosterInfo: z.object({ channelId: z.string(), messageId: z.string(), text: z.string() }).optional(),
 });
 

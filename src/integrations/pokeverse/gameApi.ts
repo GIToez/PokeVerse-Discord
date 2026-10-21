@@ -1,6 +1,7 @@
 import type { BridgeClient } from "./bridgeClient.js";
 import {
   adminSessionsResultSchema,
+  boostLevelResultSchema,
   boosterRulesResultSchema,
   boosterWeekResultSchema,
   bridgeConfigResultSchema,
@@ -18,6 +19,7 @@ import {
   trainerResultSchema,
   unlinkResultSchema,
   type AdminSessionsResult,
+  type BoostLevelResult,
   type BoosterRules,
   type BoosterWeekResult,
   type BridgeConfigResult,
@@ -78,8 +80,13 @@ export interface BoosterApi {
   readonly connected: boolean;
   hasFeature(feature: string): boolean;
   rules(): Promise<BoosterRules>;
-  /** Deposits week `week` of the boost that started at `boostSince` (unix seconds); idempotent. */
-  week(discordUserId: string, boostSince: number, week: number): Promise<BoosterWeekResult>;
+  /**
+   * Deposits week `week` of the boost that started at `boostSince` (unix seconds); idempotent.
+   * `serverBoosts`: the server's boost count now, for the community bonus.
+   */
+  week(discordUserId: string, boostSince: number, week: number, serverBoosts: number): Promise<BoosterWeekResult>;
+  /** Tells the game the server boost level (0-3) for its server-wide perks (`boostPerks`). */
+  level(level: number, boosts: number): Promise<BoostLevelResult>;
 }
 
 export function createGameApi(client: BridgeClient): GameApi {
@@ -128,8 +135,9 @@ export function createBoosterApi(client: BridgeClient): BoosterApi {
     },
     hasFeature: (feature) => client.hasFeature(feature),
     rules: () => client.request("booster.rules", {}, boosterRulesResultSchema),
-    week: (discordUserId, boostSince, week) =>
-      client.request("booster.week", { discordUserId, boostSince, week }, boosterWeekResultSchema),
+    week: (discordUserId, boostSince, week, serverBoosts) =>
+      client.request("booster.week", { discordUserId, boostSince, week, serverBoosts }, boosterWeekResultSchema),
+    level: (level, boosts) => client.request("boost.level", { level, boosts }, boostLevelResultSchema),
   };
 }
 

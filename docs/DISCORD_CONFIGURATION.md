@@ -181,13 +181,17 @@ A linked reporter is pinged on their bug report's post and when its status chang
 With `BOOSTER_REWARDS_ENABLED=true`, setup creates the read-only `#booster-rewards` channel.
 Members cannot post there but can add reactions (setup allows Add Reactions to @everyone when it
 creates the channel; for a channel that already existed, allow it yourself). The bot's first
-post explains the rewards with the game's amounts; the bot edits it when the amounts change and
-posts it again if it is deleted.
+post explains the rewards with the game's amounts and works as a live tracker: the bot edits it
+when the amounts or the server's boost count or level change (a burst of boosts is one edit),
+and posts it again if it is deleted. A server boost level change gets its own post there.
+
 The bot sees a boost through the server's boost system message (it needs View Channel in the
 system messages channel, Server Settings → System Messages), the member's `/booster`, or the
 periodic link resync. Discord only tells bots when the member's current unbroken boost
 started, not how many boosts they have, so each member earns one reward stream. Removing or
-transferring the last boost clears the start date and the streak starts again.
+transferring the last boost clears the start date and the streak starts again. The server's
+total boost count and level are visible to the bot (no extra intent); they drive the
+community bonus and the server-wide perks.
 
 ## Admin access
 

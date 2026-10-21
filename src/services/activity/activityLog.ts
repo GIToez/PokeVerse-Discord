@@ -240,6 +240,9 @@ export class ActivityLog {
     if (reward.yearly > 0) {
       parts.push(`${reward.yearly} yearly`);
     }
+    if (reward.community > 0) {
+      parts.push(`${reward.community} community at ${reward.serverBoosts} boosts`);
+    }
     this.post(undefined, "booster reward", {
       embeds: [{
         title: "Booster reward",

@@ -18,7 +18,7 @@ export const welcomeSchema = z.object({
   features: z.array(z.string()).optional(),
 });
 
-export const FEATURES = { playerSessions: "playerSessions", accountLinking: "accountLinking", boosterRewards: "boosterRewards" } as const;
+export const FEATURES = { playerSessions: "playerSessions", accountLinking: "accountLinking", boosterRewards: "boosterRewards", boostPerks: "boostPerks" } as const;
 export const errorSchema = z.object({ type: z.literal("error"), code: z.string() });
 
 const position = z.object({ x: z.number(), y: z.number(), z: z.number() });
@@ -449,6 +449,11 @@ export const boosterRulesResultSchema = z.object({
   loyalty: z.number().int().min(0),
   yearlyEvery: z.number().int().min(0),
   yearly: z.number().int().min(0),
+  /** Community bonus on loyalty weeks: +1 per `communityEvery` server boosts, at most `communityMax`. */
+  communityEvery: z.number().int().min(0).default(0),
+  communityMax: z.number().int().min(0).default(0),
+  /** In-game perks for the whole server by server boost level (each level keeps the ones below). */
+  perks: z.array(z.object({ level: z.number().int().min(1).max(3), text: z.string().max(100) })).max(12).default([]),
 });
 export type BoosterRules = z.infer<typeof boosterRulesResultSchema>;
 
@@ -462,9 +467,17 @@ export const boosterWeekResultSchema = z.object({
   weekly: z.number().int().min(0),
   loyalty: z.number().int().min(0),
   yearly: z.number().int().min(0),
+  community: z.number().int().min(0).default(0),
   total: z.number().int().min(0),
 });
 export type BoosterWeekResult = z.infer<typeof boosterWeekResultSchema>;
+
+/** The server boost level the game now applies, and the perks active at it. */
+export const boostLevelResultSchema = z.object({
+  level: z.number().int().min(0).max(3),
+  perks: z.array(z.string().max(100)).max(12).default([]),
+});
+export type BoostLevelResult = z.infer<typeof boostLevelResultSchema>;
 
 export const reportSetStatusResultSchema = z.object({ id: z.number(), status: z.string(), changed: z.boolean() });
 export type ReportSetStatusResult = z.infer<typeof reportSetStatusResultSchema>;
