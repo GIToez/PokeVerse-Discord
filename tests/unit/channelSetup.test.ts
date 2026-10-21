@@ -32,6 +32,26 @@ describe("channel setup", () => {
     expect(store.get().guildId).toBe(DEV_GUILD);
   });
 
+  it("creates the read-only #booster-rewards channel only with booster rewards on", async () => {
+    const store = new StateStore(join(tempDir(), "state.json"), "development");
+    const channelSetup = new ChannelSetup(store, silentLogger, {
+      activity: { enabled: false, viewerRoleIds: [], viewerUserIds: [] },
+      adminRoleIds: [],
+      adminUserIds: [],
+      linking: { enabled: false, roles: [] },
+      reports: { bugs: false, players: false },
+      boosters: true,
+    });
+    const guild = new FakeGuild();
+    const report = await channelSetup.run(guild);
+    expect(report.ok).toBe(true);
+    const channel = guild.created.find((item) => item.name === "booster-rewards")!;
+    expect(channel.parentId).toBe(store.get().categoryId);
+    expect(channel.overwrites).toContainEqual({ id: EVERYONE, type: "role", allow: [], deny: ["SendMessages"] });
+    expect(store.getChannelId("boosterRewards")).toBe(channel.id);
+    expect((await setup().setup.run(new FakeGuild())).channels.some((item) => item.purpose === "boosterRewards")).toBe(false);
+  });
+
   it("uses least-privilege overwrites: read-only feeds, writable chat", async () => {
     const guild = new FakeGuild();
     await setup().setup.run(guild);

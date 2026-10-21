@@ -458,6 +458,7 @@ export class DiscordGuildPort implements GuildPort {
         roleIds: [...member.roles.cache.keys()],
         nickname: member.nickname,
         nicknameManageable: member.manageable,
+        premiumSince: member.premiumSinceTimestamp,
       };
     } catch (error) {
       if (isUnknownMember(error)) {

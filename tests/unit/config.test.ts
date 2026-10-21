@@ -178,6 +178,13 @@ describe("activity log and linking configuration", () => {
     expect(describeConfig(custom)).toMatchObject({ linking: false });
   });
 
+  it("keeps booster rewards off by default and only with account linking", () => {
+    expect(makeConfig().boosters).toEqual({ enabled: false, reminders: true, mention: true });
+    expect(describeConfig(makeConfig())).toMatchObject({ boosterRewards: false });
+    expect(makeConfig({ BOOSTER_REWARDS_ENABLED: "true", BOOSTER_MENTION: "false" }).boosters).toEqual({ enabled: true, reminders: true, mention: false });
+    expect(makeConfig({ BOOSTER_REWARDS_ENABLED: "true", LINKING_ENABLED: "false" }).boosters.enabled).toBe(false);
+  });
+
   it("parses and validates the staff group roles", () => {
     const config = makeConfig({ STAFF_ROLE_NAMES: " 4 = Game Master , 2=Helper" });
     expect(config.linking.staffRoles).toEqual([{ groupId: 2, name: "Helper" }, { groupId: 4, name: "Game Master" }]);

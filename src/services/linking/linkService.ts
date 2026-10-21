@@ -23,6 +23,8 @@ export interface LinkServiceOptions {
   metrics: Metrics;
   /** Told about every link and unlink the bot sees (staff activity log). */
   onChange?: (change: LinkChange) => void;
+  /** Told about every member sync, with the member as Discord reports it now (booster rewards). */
+  onSynced?: (discordUserId: string, member: MemberInfo | undefined, link: LinkSummary | undefined) => void;
 }
 
 /**
@@ -118,6 +120,7 @@ export class LinkService {
       return result;
     }
     const member = await guild.fetchMember(discordUserId);
+    this.options.onSynced?.(discordUserId, member, link);
     if (!member) {
       if (!link) {
         this.forget(discordUserId);

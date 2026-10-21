@@ -13,6 +13,7 @@ export const CHANNEL_PURPOSES = [
   "playerActivity",
   "bugReports",
   "playerReports",
+  "boosterRewards",
 ] as const;
 
 export type ChannelPurpose = (typeof CHANNEL_PURPOSES)[number];
@@ -50,6 +51,21 @@ const reportPostSchema = z.object({
 
 export type ReportPostRecord = z.infer<typeof reportPostSchema>;
 
+const boosterSchema = z.object({
+  /** premiumSince of the boost streak (ms); a different value is a new streak. */
+  since: z.number(),
+  /** Last week of this streak that was paid, skipped (before linking) or written off. */
+  paidWeek: z.number().int().default(0),
+  /** Soul Coins deposited in this streak. */
+  total: z.number().int().default(0),
+  linked: z.boolean().default(false),
+  /** When the "link your account" reminder was posted (ms). */
+  remindedAt: z.number().optional(),
+  missedReminder: z.boolean().optional(),
+});
+
+export type BoosterRecord = z.infer<typeof boosterSchema>;
+
 const stateSchema = z.object({
   version: z.literal(1),
   profile: z.string(),
@@ -72,6 +88,8 @@ const stateSchema = z.object({
   legendaryEncounters: z.record(legendaryEncounterSchema).default({}),
   /** Forum posts of in-game reports, by the game's report id. */
   reportPosts: z.record(reportPostSchema).default({}),
+  /** Members seen boosting the server, by Discord user id (booster rewards). */
+  boosters: z.record(boosterSchema).default({}),
 });
 
 export type BotState = z.infer<typeof stateSchema>;
@@ -92,7 +110,7 @@ export class StateStore {
 
   private load(): BotState {
     if (!existsSync(this.file)) {
-      return { version: 1, profile: this.profile, channels: {}, roles: {}, linkedMembers: {}, legendaryEncounters: {}, reportPosts: {} };
+      return { version: 1, profile: this.profile, channels: {}, roles: {}, linkedMembers: {}, legendaryEncounters: {}, reportPosts: {}, boosters: {} };
     }
     const parsed = stateSchema.parse(JSON.parse(readFileSync(this.file, "utf8")));
     if (parsed.profile !== this.profile) {

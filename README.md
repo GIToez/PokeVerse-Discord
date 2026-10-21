@@ -21,6 +21,7 @@ Discord is down, gameplay is not affected.
 | Automatic creation of the "PokeVerse Integration" category and channels; never deletes anything | on startup (development) or `setup` |
 | Private staff log of logins and logouts (character, level, account, IP, approximate location, client, session, reason) and of account links and unlinks, posted only while the channel is verified private, deleted after 30 days | `Admin Logs` / `#player-activity` |
 | Account linking with a one-time code from `!discord link` in game: `/link`, `/unlink`, `/account`, `/characters`, `/main`, `/sync` (all private) | anywhere |
+| Soul Coin rewards for server boosters: 1 per 7 days of continuous boosting, +1 every 4th week, +15 every year; paid by the game to the linked account, `/booster` | `#booster-rewards` |
 | **Verified Trainer** role for linked members, **Ace Trainer** while the game account has premium time, **Tutor** / **Senior Tutor** / **Gamemaster** / **Community Manager** / **God** for the highest in-game staff group, server nickname = main character | automatic |
 
 Out of scope for this version: GTS, trading, marketplace, purchases, catching or battling

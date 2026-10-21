@@ -18,7 +18,7 @@ export const welcomeSchema = z.object({
   features: z.array(z.string()).optional(),
 });
 
-export const FEATURES = { playerSessions: "playerSessions", accountLinking: "accountLinking" } as const;
+export const FEATURES = { playerSessions: "playerSessions", accountLinking: "accountLinking", boosterRewards: "boosterRewards" } as const;
 export const errorSchema = z.object({ type: z.literal("error"), code: z.string() });
 
 const position = z.object({ x: z.number(), y: z.number(), z: z.number() });
@@ -441,6 +441,30 @@ export type TrainerCard = z.infer<typeof trainerCardSchema>;
 export type CardPokemon = z.infer<typeof cardPokemonSchema>;
 export type ServerStatusResult = z.infer<typeof serverStatusResultSchema>;
 export type BridgeConfigResult = z.infer<typeof bridgeConfigResultSchema>;
+
+/** The game's booster reward amounts (Soul Coins); the game owns them, the bot only shows them. */
+export const boosterRulesResultSchema = z.object({
+  weekly: z.number().int().min(0),
+  loyaltyEvery: z.number().int().min(0),
+  loyalty: z.number().int().min(0),
+  yearlyEvery: z.number().int().min(0),
+  yearly: z.number().int().min(0),
+});
+export type BoosterRules = z.infer<typeof boosterRulesResultSchema>;
+
+/**
+ * A completed boost week. `deposited` is false when the game had already paid that week
+ * (the amounts are then the ones paid before).
+ */
+export const boosterWeekResultSchema = z.object({
+  deposited: z.boolean(),
+  week: z.number().int(),
+  weekly: z.number().int().min(0),
+  loyalty: z.number().int().min(0),
+  yearly: z.number().int().min(0),
+  total: z.number().int().min(0),
+});
+export type BoosterWeekResult = z.infer<typeof boosterWeekResultSchema>;
 
 export const reportSetStatusResultSchema = z.object({ id: z.number(), status: z.string(), changed: z.boolean() });
 export type ReportSetStatusResult = z.infer<typeof reportSetStatusResultSchema>;

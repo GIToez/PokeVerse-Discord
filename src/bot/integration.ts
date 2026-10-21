@@ -1,7 +1,15 @@
 import type { BotConfig } from "../config/load.js";
 import { CommandRouter } from "../commands/router.js";
 import { BridgeClient, type ConnectedInfo } from "../integrations/pokeverse/bridgeClient.js";
-import { createAdminApi, createGameApi, createLinkApi, createReportApi, type GameApi, type LinkApi } from "../integrations/pokeverse/gameApi.js";
+import {
+  createAdminApi,
+  createBoosterApi,
+  createGameApi,
+  createLinkApi,
+  createReportApi,
+  type GameApi,
+  type LinkApi,
+} from "../integrations/pokeverse/gameApi.js";
 import { FEATURES, type GameEventEnvelope } from "../integrations/pokeverse/protocol.js";
 import { LinkCommands } from "../commands/linkCommands.js";
 import { ActivityLog } from "../services/activity/activityLog.js";
@@ -9,6 +17,7 @@ import { ActivityStore } from "../services/activity/activityStore.js";
 import { GeoIp } from "../services/activity/geoip.js";
 import { LinkService, type NicknameMode, type SyncResult } from "../services/linking/linkService.js";
 import { Announcer } from "../services/announcements/announcer.js";
+import { BoosterRewards } from "../services/boosters/boosterRewards.js";
 import { CatchAnnouncer } from "../services/catches/catchAnnouncer.js";
 import { ChatRelay } from "../services/chat/chatRelay.js";
 import { ArtworkResolver } from "../services/pokemon/artwork.js";
@@ -58,6 +67,7 @@ export class GameIntegration {
   readonly activity: ActivityLog | undefined;
   readonly linking: LinkService | undefined;
   readonly reports: ReportForums;
+  readonly boosters: BoosterRewards | undefined;
   private readonly queues: Record<string, DeliveryQueue>;
   private resyncTimer: NodeJS.Timeout | undefined;
 
@@ -85,6 +95,7 @@ export class GameIntegration {
       activity: queue("activity"),
       linking: queue("linking", 1000),
       reports: queue("reports", 1000),
+      boosters: queue("boosters", 1000),
     };
     this.links = createLinkApi(this.bridge);
 
@@ -160,6 +171,7 @@ export class GameIntegration {
         ],
       },
       reports: { bugs: config.reports.bugs, players: config.reports.players },
+      boosters: config.boosters.enabled,
     });
     this.reports = new ReportForums({
       config: config.reports,
@@ -190,6 +202,21 @@ export class GameIntegration {
           reconcileDelayMs: options.reconnectSyncDelayMs,
         })
       : undefined;
+    this.boosters = config.boosters.enabled
+      ? new BoosterRewards({
+          config: { reminders: config.boosters.reminders, mention: config.boosters.mention, checkMinutes: config.linking.resyncMinutes },
+          api: createBoosterApi(this.bridge),
+          links: this.links,
+          guild: options.guild,
+          channels,
+          store,
+          queue: this.queues.boosters!,
+          logger: logger.child({ component: "boosters" }),
+          metrics,
+          onReward: (reward) => this.activity?.handleBoosterReward(reward),
+          now: options.now,
+        })
+      : undefined;
     this.linking = config.linking.enabled
       ? new LinkService({
           config: config.linking,
@@ -199,6 +226,7 @@ export class GameIntegration {
           logger: logger.child({ component: "linking" }),
           metrics,
           onChange: (change) => this.activity?.handleLinkChange(change),
+          onSynced: (discordUserId, member, link) => this.boosters?.observe(discordUserId, member, link),
         })
       : undefined;
     this.commands = new CommandRouter({
@@ -216,6 +244,7 @@ export class GameIntegration {
       logger: logger.child({ component: "commands" }),
       metrics,
       activity: this.activity,
+      boosters: this.boosters,
       linking: this.linking
         ? {
             service: this.linking,
@@ -245,6 +274,7 @@ export class GameIntegration {
     this.status.start();
     this.activity?.start();
     this.linking?.start();
+    this.boosters?.start();
   }
 
   async stop(): Promise<void> {
@@ -252,6 +282,7 @@ export class GameIntegration {
     clearTimeout(this.resyncTimer);
     this.activity?.stop();
     this.linking?.stop();
+    this.boosters?.stop();
     this.bridge.stop();
     await Promise.race([
       Promise.all(Object.values(this.queues).map((queue) => queue.idle())),

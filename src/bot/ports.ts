@@ -132,6 +132,11 @@ export interface MemberInfo {
   nickname: string | null;
   /** The bot can change this member's nickname (not the owner, below the bot's highest role). */
   nicknameManageable: boolean;
+  /**
+   * Start of the member's current unbroken server boost (ms), null when not boosting. Discord
+   * clears it when the last boost is removed or transferred and sets a new time on a new boost.
+   */
+  premiumSince: number | null;
 }
 
 export interface GuildPort {

@@ -1,4 +1,4 @@
-import { AuditLogEvent, Client, Events, GatewayIntentBits, PermissionFlagsBits, type AnyThreadChannel, type Guild } from "discord.js";
+import { AuditLogEvent, Client, Events, GatewayIntentBits, MessageType, PermissionFlagsBits, type AnyThreadChannel, type Guild } from "discord.js";
 import { buildCommandDefinitions } from "../commands/definitions.js";
 import type { BotConfig } from "../config/load.js";
 import { createInteractionHandler } from "../events/interactionCreate.js";
@@ -21,6 +21,12 @@ export class StartupError extends Error {
 export const GATEWAY_INTENTS = [GatewayIntentBits.Guilds, GatewayIntentBits.GuildMessages, GatewayIntentBits.MessageContent];
 /** Privileged; only requested with DISCORD_MEMBERS_INTENT=true (instant role restore on rejoin). */
 export const MEMBERS_INTENT = GatewayIntentBits.GuildMembers;
+const BOOST_MESSAGE_TYPES = new Set<MessageType>([
+  MessageType.GuildBoost,
+  MessageType.GuildBoostTier1,
+  MessageType.GuildBoostTier2,
+  MessageType.GuildBoostTier3,
+]);
 /** Channel setup only needs guild data, so it works before Message Content is enabled. */
 export const SETUP_GATEWAY_INTENTS = [GatewayIntentBits.Guilds];
 
@@ -106,7 +112,7 @@ export class BotApp {
     this.guild = new DiscordGuildPort(guild);
     logger.info("Using guild", { guild: guild.name, id: guild.id });
 
-    await guild.commands.set(buildCommandDefinitions({ linking: config.linking.enabled }));
+    await guild.commands.set(buildCommandDefinitions({ linking: config.linking.enabled, boosters: config.boosters.enabled }));
     logger.info("Slash commands registered for the guild");
 
     if (config.autoSetup || options.setupOnly) {
@@ -125,6 +131,15 @@ export class BotApp {
     }
 
     client.on(Events.MessageCreate, createMessageHandler(this.integration.chat, logger.child({ component: "chat" })));
+    const boosters = this.integration.boosters;
+    if (boosters) {
+      // "X just boosted the server" system messages: how the bot finds boosters who are not linked.
+      client.on(Events.MessageCreate, (message) => {
+        if (message.guildId === config.discord.guildId && BOOST_MESSAGE_TYPES.has(message.type) && !message.author.bot) {
+          boosters.onBoostMessage(message.author.id);
+        }
+      });
+    }
     client.on(Events.InteractionCreate, createInteractionHandler(this.integration.commands, logger.child({ component: "commands" })));
     client.on(Events.ThreadUpdate, (before, after) => void this.onThreadUpdate(before, after));
     client.on(Events.GuildMemberAdd, (member) => {

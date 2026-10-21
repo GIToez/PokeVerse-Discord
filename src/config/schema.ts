@@ -122,6 +122,10 @@ export const envSchema = z.object({
   REPORT_MENTION_REPORTER: bool(true),
   REPORT_TAG_SYNC: bool(true),
 
+  BOOSTER_REWARDS_ENABLED: bool(false),
+  BOOSTER_REMINDERS: bool(true),
+  BOOSTER_MENTION: bool(true),
+
   LINKING_ENABLED: bool(true),
   VERIFIED_ROLE_NAME: z.string().trim().min(1).max(100).default("Verified Trainer"),
   PREMIUM_ROLE_ENABLED: bool(true),

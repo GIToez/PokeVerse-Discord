@@ -1,3 +1,4 @@
+import type { BoosterReward } from "../boosters/boosterRewards.js";
 import type { APIEmbed } from "discord.js";
 import type { ChannelDirectory, ChannelSink, GuildPort } from "../../bot/ports.js";
 import type { ConnectedInfo } from "../../integrations/pokeverse/bridgeClient.js";
@@ -227,6 +228,32 @@ export class ActivityLog {
   handleLinkChange(change: LinkChange): void {
     this.options.metrics.increment(`activity.${change.action}`);
     this.post(undefined, change.action, { embeds: [this.linkEmbed(change)] });
+  }
+
+  /** Posts a booster reward deposit (staff record of Soul Coins created from Discord). */
+  handleBoosterReward(reward: BoosterReward): void {
+    this.options.metrics.increment("activity.booster_reward");
+    const parts = [`${reward.weekly} weekly`];
+    if (reward.loyalty > 0) {
+      parts.push(`${reward.loyalty} loyalty`);
+    }
+    if (reward.yearly > 0) {
+      parts.push(`${reward.yearly} yearly`);
+    }
+    this.post(undefined, "booster reward", {
+      embeds: [{
+        title: "Booster reward",
+        color: COLORS.info,
+        fields: [
+          { name: "Discord user", value: `<@${reward.discordUserId}> (\`${reward.discordUserId}\`)`, inline: true },
+          { name: "Time", value: discordTimestamp(this.seconds(), "f"), inline: true },
+          { name: reward.weeks.length === 1 ? "Week" : "Weeks", value: reward.weeks.join(", "), inline: true },
+          { name: "Soul Coins", value: `${reward.total} (${parts.join(", ")})`, inline: true },
+          { name: "Boosting", value: `${reward.streakDays} days, ${reward.streakTotal} Soul Coins this streak`, inline: true },
+        ],
+        footer: { text: this.footer() },
+      }],
+    });
   }
 
   /** `sessionId` undefined: the message belongs to no session and expires on its own. */

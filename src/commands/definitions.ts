@@ -18,6 +18,7 @@ const CATCH_MODE_LABELS: Record<(typeof CATCH_MODES)[number], string> = {
 
 export interface CommandDefinitionOptions {
   linking: boolean;
+  boosters?: boolean;
 }
 
 interface Definition {
@@ -126,6 +127,14 @@ export function buildCommandDefinitions(options: CommandDefinitionOptions = { li
   const commands: Definition[] = [trainer, pokemon, server, admin];
   if (options.linking) {
     commands.push(...linkingCommands());
+  }
+  if (options.boosters) {
+    commands.push(
+      new SlashCommandBuilder()
+        .setName("booster")
+        .setDescription("Your server boost streak and Soul Coin rewards (only you can see it)")
+        .setContexts(InteractionContextType.Guild),
+    );
   }
   return commands.map((command) => command.toJSON());
 }

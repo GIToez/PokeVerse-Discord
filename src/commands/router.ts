@@ -15,6 +15,7 @@ import { KeyedRateLimiter } from "../utils/rateLimiter.js";
 import { CATCH_MODES, CHANNEL_PURPOSES, type CatchMode, type ChannelPurpose, type StateStore } from "../utils/stateStore.js";
 import type { ActivityLog } from "../services/activity/activityLog.js";
 import type { LinkApi } from "../integrations/pokeverse/gameApi.js";
+import type { BoosterRewards } from "../services/boosters/boosterRewards.js";
 import type { LinkService } from "../services/linking/linkService.js";
 import { LINK_COMMANDS, type LinkCommands } from "./linkCommands.js";
 
@@ -63,11 +64,13 @@ export interface CommandRouterOptions {
   /** Account linking (absent when LINKING_ENABLED=false). */
   linking?: { commands: LinkCommands; service: LinkService; api: LinkApi } | undefined;
   activity?: ActivityLog | undefined;
+  /** Booster rewards (absent when BOOSTER_REWARDS_ENABLED=false). */
+  boosters?: BoosterRewards | undefined;
 }
 
 /** Commands whose replies are always private. */
 export function isPrivateCommand(commandName: string): boolean {
-  return commandName === "pokeverse" || (LINK_COMMANDS as readonly string[]).includes(commandName);
+  return commandName === "pokeverse" || commandName === "booster" || (LINK_COMMANDS as readonly string[]).includes(commandName);
 }
 
 const OFFLINE_TEXT = "The PokeVerse game server is offline right now. Please try again later.";
@@ -84,6 +87,7 @@ function reply(text: string, ephemeral = true, color?: number): CommandResponse 
  */
 export class CommandRouter {
   private readonly lookupLimiter = new KeyedRateLimiter(5, 10_000);
+  private readonly boosterLimiter = new KeyedRateLimiter(3, 30_000);
 
   constructor(private readonly options: CommandRouterOptions) {}
 
@@ -110,6 +114,8 @@ export class CommandRouter {
           return await this.server();
         case "pokeverse":
           return await this.admin(input);
+        case "booster":
+          return await this.booster(input);
         default:
           if (this.options.linking && (LINK_COMMANDS as readonly string[]).includes(input.commandName)) {
             return await this.options.linking.commands.handle(input);
@@ -127,6 +133,17 @@ export class CommandRouter {
       this.options.logger.error("Command failed", { command: input.commandName, error });
       return reply("Something went wrong. The error was logged.");
     }
+  }
+
+  private async booster(input: CommandInput): Promise<CommandResponse> {
+    const boosters = this.options.boosters;
+    if (!boosters) {
+      return reply("Booster rewards are not enabled on this server.");
+    }
+    if (!this.boosterLimiter.tryTake(input.user.id)) {
+      return reply("You are using this command too quickly. Please wait a moment.");
+    }
+    return reply(await boosters.statusText(input.user.id), true, 0xf47fff);
   }
 
   async handleComponent(input: ComponentInput): Promise<CommandResponse> {
@@ -325,6 +342,8 @@ export class CommandRouter {
     } else {
       lines.push("Account linking: **off**");
     }
+    const boosters = this.options.boosters;
+    lines.push(`Booster rewards: **${!boosters ? "off" : boosters.available ? "available" : game.connected ? "not supported by the game server" : "game offline"}**`);
     if (guild) {
       const report = await this.options.setup.inspect(guild);
       lines.push("", formatSetupReport(report));

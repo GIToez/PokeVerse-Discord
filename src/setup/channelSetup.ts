@@ -62,6 +62,8 @@ export interface SetupOptions {
   adminUserIds: string[];
   linking: { enabled: boolean; roles: Array<{ key: RoleKey; name: string }> };
   reports: { bugs: boolean; players: boolean };
+  /** The #booster-rewards channel. */
+  boosters?: boolean;
 }
 
 const DEFAULT_OPTIONS: SetupOptions = {
@@ -116,7 +118,7 @@ export class ChannelSetup {
 
   private definitions(): readonly ChannelDefinition[] {
     const { activity, reports } = this.options;
-    const enabled = { activity: activity.enabled, bugReports: reports.bugs, playerReports: reports.players };
+    const enabled = { activity: activity.enabled, bugReports: reports.bugs, playerReports: reports.players, boosterRewards: this.options.boosters ?? false };
     return CHANNEL_DEFINITIONS.filter((definition) => !definition.feature || enabled[definition.feature]);
   }
 

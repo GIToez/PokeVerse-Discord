@@ -176,6 +176,15 @@ change the game refuses, puts the tag back.
 A linked reporter is pinged on their bug report's post and when its status changes
 (`REPORT_MENTION_REPORTER`); player reports never ping anyone.
 
+## Booster rewards
+
+With `BOOSTER_REWARDS_ENABLED=true`, setup creates the read-only `#booster-rewards` channel.
+The bot sees a boost through the server's boost system message (it needs View Channel in the
+system messages channel, Server Settings → System Messages), the member's `/booster`, or the
+periodic link resync. Discord only tells bots when the member's current unbroken boost
+started, not how many boosts they have, so each member earns one reward stream. Removing or
+transferring the last boost clears the start date and the streak starts again.
+
 ## Admin access
 
 `/pokeverse` is hidden from members without **Manage Server** by default (server

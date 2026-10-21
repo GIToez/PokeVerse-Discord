@@ -69,6 +69,14 @@ export interface BotConfig {
     /** A status tag picked on Discord changes the report in the game. */
     tagSync: boolean;
   };
+  boosters: {
+    /** Soul Coins for server boosters (needs account linking and the game's boosterRewards feature). */
+    enabled: boolean;
+    /** Ask boosters who are not linked to link their account. */
+    reminders: boolean;
+    /** Ping the booster on their reward and reminder posts. */
+    mention: boolean;
+  };
   linking: {
     enabled: boolean;
     verifiedRoleName: string;
@@ -260,6 +268,11 @@ export function loadConfig(options: LoadOptions): BotConfig {
       mentionReporter: raw.REPORT_MENTION_REPORTER,
       tagSync: raw.REPORT_TAG_SYNC,
     },
+    boosters: {
+      enabled: raw.BOOSTER_REWARDS_ENABLED && raw.LINKING_ENABLED,
+      reminders: raw.BOOSTER_REMINDERS,
+      mention: raw.BOOSTER_MENTION,
+    },
     linking: {
       enabled: raw.LINKING_ENABLED,
       verifiedRoleName: raw.VERIFIED_ROLE_NAME,
@@ -301,6 +314,7 @@ export function describeConfig(config: BotConfig): Record<string, unknown> {
       ? { ip: config.activity.ipMode, retentionDays: config.activity.retentionDays, geoip: config.activity.geoipDatabase !== undefined }
       : false,
     reports: { bugs: config.reports.bugs, players: config.reports.players, tagSync: config.reports.tagSync },
+    boosterRewards: config.boosters.enabled ? { reminders: config.boosters.reminders, mention: config.boosters.mention } : false,
     linking: config.linking.enabled
       ? {
           roles: [

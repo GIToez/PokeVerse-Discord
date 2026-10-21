@@ -23,10 +23,12 @@ import type {
 import { loadConfig, type BotConfig } from "../../src/config/load.js";
 import type { ChannelSetup, SetupReport } from "../../src/setup/channelSetup.js";
 import { BridgeRequestError, BridgeUnavailableError } from "../../src/integrations/pokeverse/bridgeClient.js";
-import type { AdminApi, GameApi, LinkApi } from "../../src/integrations/pokeverse/gameApi.js";
+import type { AdminApi, BoosterApi, GameApi, LinkApi } from "../../src/integrations/pokeverse/gameApi.js";
 import {
   FEATURES,
   type AdminSessionsResult,
+  type BoosterRules,
+  type BoosterWeekResult,
   type BridgeConfigResult,
   type GameEvent,
   type GameEventEnvelope,
@@ -395,7 +397,7 @@ export class FakeGuild implements GuildPort {
   }
 
   addMember(id: string, member: Partial<Omit<FakeMember, "id">> = {}): FakeMember {
-    const full: FakeMember = { id, roleIds: [], nickname: null, nicknameManageable: true, ...member };
+    const full: FakeMember = { id, roleIds: [], nickname: null, nicknameManageable: true, premiumSince: null, ...member };
     this.members.set(id, full);
     return full;
   }
@@ -736,4 +738,79 @@ export function envelope<E extends GameEvent>(event: E, options: { time?: number
     bootId,
     event,
   };
+}
+
+/**
+ * The game's booster rewards with the rules the game enforces: amounts from its own settings,
+ * one payment per (Discord user, boost start, week), no week before it is due, no week
+ * completed before the link, no outdated streak.
+ */
+export class FakeBoosterApi implements BoosterApi {
+  connected = true;
+  features = new Set<string>([FEATURES.boosterRewards]);
+  rulesValue: BoosterRules = { weekly: 1, loyaltyEvery: 4, loyalty: 1, yearlyEvery: 52, yearly: 15 };
+  /** Paid weeks by `${user}:${boostSince}:${week}`, with the time they were paid (unix seconds). */
+  readonly ledger = new Map<string, BoosterWeekResult & { user: string; boostSince: number; paidAt: number }>();
+  readonly calls: string[] = [];
+  /** Discord user -> linked_at (unix seconds); users missing here are not linked. */
+  readonly linkedAt = new Map<string, number>();
+  failNext: string[] = [];
+
+  constructor(private readonly now: () => number) {}
+
+  hasFeature(feature: string): boolean {
+    return this.connected && this.features.has(feature);
+  }
+
+  private guard(name: string): void {
+    this.calls.push(name);
+    if (!this.connected) {
+      throw new BridgeUnavailableError();
+    }
+    const failure = this.failNext.shift();
+    if (failure) {
+      throw new BridgeRequestError(failure, failure);
+    }
+  }
+
+  async rules(): Promise<BoosterRules> {
+    this.guard("booster.rules");
+    return this.rulesValue;
+  }
+
+  async week(discordUserId: string, boostSince: number, week: number): Promise<BoosterWeekResult> {
+    this.guard(`booster.week ${discordUserId} ${week}`);
+    const now = Math.floor(this.now() / 1000);
+    const linkedAt = this.linkedAt.get(discordUserId);
+    if (linkedAt === undefined) {
+      throw new BridgeRequestError("not_linked", "not linked");
+    }
+    const paid = this.ledger.get(`${discordUserId}:${boostSince}:${week}`);
+    if (paid) {
+      const { user: _user, boostSince: _since, paidAt: _at, ...result } = paid;
+      return { ...result, deposited: false };
+    }
+    const due = boostSince + week * 7 * 86_400;
+    if (due > now + 300) {
+      throw new BridgeRequestError("not_due", "not due");
+    }
+    if (due < linkedAt) {
+      throw new BridgeRequestError("before_link", "before link");
+    }
+    const last = [...this.ledger.values()].filter((item) => item.user === discordUserId).sort((a, b) => b.paidAt - a.paidAt)[0];
+    if (last && last.boostSince !== boostSince && (boostSince < last.boostSince || boostSince < last.paidAt)) {
+      throw new BridgeRequestError("stale_streak", "stale streak");
+    }
+    const rules = this.rulesValue;
+    const loyalty = rules.loyaltyEvery > 0 && week % rules.loyaltyEvery === 0 ? rules.loyalty : 0;
+    const yearly = rules.yearlyEvery > 0 && week % rules.yearlyEvery === 0 ? rules.yearly : 0;
+    const result = { deposited: true, week, weekly: rules.weekly, loyalty, yearly, total: rules.weekly + loyalty + yearly };
+    this.ledger.set(`${discordUserId}:${boostSince}:${week}`, { ...result, user: discordUserId, boostSince, paidAt: now });
+    return result;
+  }
+
+  /** Soul Coins deposited for a Discord user. */
+  deposited(discordUserId: string): number {
+    return [...this.ledger.values()].filter((item) => item.user === discordUserId).reduce((sum, item) => sum + item.total, 0);
+  }
 }

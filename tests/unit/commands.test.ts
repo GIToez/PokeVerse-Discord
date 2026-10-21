@@ -290,6 +290,7 @@ describe("command safety", () => {
     const definitions = buildCommandDefinitions();
     expect(definitions.map((command) => command.name)).toEqual(["trainer", "pokemon", "server", "pokeverse", "link", "unlink", "account", "characters", "main", "sync"]);
     expect(buildCommandDefinitions({ linking: false }).map((command) => command.name)).toEqual(["trainer", "pokemon", "server", "pokeverse"]);
+    expect(buildCommandDefinitions({ linking: true, boosters: true }).map((command) => command.name).at(-1)).toBe("booster");
     const admin = definitions.find((command) => command.name === "pokeverse")!;
     expect(admin.default_member_permissions).toBe((1n << 5n).toString());
     const pokemon = definitions.find((command) => command.name === "pokemon")!;
@@ -316,7 +317,7 @@ describe("account linking commands", () => {
   });
 
   it("marks admin and linking replies as private", () => {
-    for (const name of ["pokeverse", "link", "unlink", "account", "characters", "main", "sync"]) {
+    for (const name of ["pokeverse", "link", "unlink", "account", "characters", "main", "sync", "booster"]) {
       expect(isPrivateCommand(name)).toBe(true);
     }
     for (const name of ["trainer", "pokemon", "server"]) {

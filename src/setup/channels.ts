@@ -22,7 +22,7 @@ export interface ChannelDefinition {
   type?: "text" | "forum";
   tags?: ForumTagSpec[];
   /** The config switch the channel belongs to; without one it is always set up. */
-  feature?: "activity" | "bugReports" | "playerReports";
+  feature?: "activity" | "bugReports" | "playerReports" | "boosterRewards";
 }
 
 const POST: PermissionName[] = ["ViewChannel", "SendMessages", "EmbedLinks", "ReadMessageHistory"];
@@ -94,6 +94,16 @@ export const CHANNEL_DEFINITIONS: readonly ChannelDefinition[] = [
     required: POST,
     group: "admin",
     feature: "activity",
+  },
+  {
+    purpose: "boosterRewards",
+    name: "booster-rewards",
+    topic: "Thank you, boosters! Every 7 days of continuous boosting earns Soul Coins on your linked game account, " +
+      "with loyalty and yearly bonuses. Link your account with /link and check your streak with /booster.",
+    readOnly: true,
+    required: POST,
+    group: "main",
+    feature: "boosterRewards",
   },
   {
     purpose: "bugReports",

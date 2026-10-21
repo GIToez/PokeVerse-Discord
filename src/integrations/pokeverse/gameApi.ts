@@ -1,6 +1,8 @@
 import type { BridgeClient } from "./bridgeClient.js";
 import {
   adminSessionsResultSchema,
+  boosterRulesResultSchema,
+  boosterWeekResultSchema,
   bridgeConfigResultSchema,
   chatSendResultSchema,
   linkAccountResultSchema,
@@ -16,6 +18,8 @@ import {
   trainerResultSchema,
   unlinkResultSchema,
   type AdminSessionsResult,
+  type BoosterRules,
+  type BoosterWeekResult,
   type BridgeConfigResult,
   type LinkAccountResult,
   type LinkCharactersResult,
@@ -69,6 +73,15 @@ export interface ReportApi {
   screenshot(id: number, offset: number, length: number): Promise<ReportScreenshotResult>;
 }
 
+/** Server boost rewards: Soul Coins for every 7 days of continuous boosting (linked accounts only). */
+export interface BoosterApi {
+  readonly connected: boolean;
+  hasFeature(feature: string): boolean;
+  rules(): Promise<BoosterRules>;
+  /** Deposits week `week` of the boost that started at `boostSince` (unix seconds); idempotent. */
+  week(discordUserId: string, boostSince: number, week: number): Promise<BoosterWeekResult>;
+}
+
 export function createGameApi(client: BridgeClient): GameApi {
   return {
     get connected() {
@@ -105,6 +118,18 @@ export function createAdminApi(client: BridgeClient): AdminApi {
       return client.connected;
     },
     sessions: () => client.request("admin.sessions", {}, adminSessionsResultSchema),
+  };
+}
+
+export function createBoosterApi(client: BridgeClient): BoosterApi {
+  return {
+    get connected() {
+      return client.connected;
+    },
+    hasFeature: (feature) => client.hasFeature(feature),
+    rules: () => client.request("booster.rules", {}, boosterRulesResultSchema),
+    week: (discordUserId, boostSince, week) =>
+      client.request("booster.week", { discordUserId, boostSince, week }, boosterWeekResultSchema),
   };
 }
 

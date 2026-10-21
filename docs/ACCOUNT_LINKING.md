@@ -99,6 +99,29 @@ premium, how the unlink happened (`/unlink`, `!discord unlink` or staff `/pokeve
 with the admin's name) and the roles given or removed, plus any Discord sync problems. These
 posts follow the same privacy check and retention as login posts ([PRIVACY.md](PRIVACY.md)).
 
+## Booster rewards
+
+Off by default (`BOOSTER_REWARDS_ENABLED`). A member who boosts the server earns Soul Coins on
+their linked game account, deposited by the game (withdraw at the bank):
+
+| Week | Soul Coins |
+| --- | --- |
+| Every 7 days of continuous boosting | 1 |
+| Every 4th week (loyalty) | +1, so 5 per 4 weeks |
+| Week 52, 104, … (yearly milestone) | +15 |
+
+The amounts are set in the game's `config.lua`; the bot only reports which week of which
+boost is complete. The game refuses a week that is not due yet, that was due before the
+account was linked, that was already paid, or that belongs to an older boost streak, so a
+lost bot state file or a re-run never pays twice.
+
+- The streak is Discord's "boosting since" date. Removing or transferring the boost ends it;
+  a new boost starts at week 1 again.
+- Weeks are only paid while linked. An unlinked booster gets one reminder in
+  `#booster-rewards` to link with `/link`, and one note when a week went unpaid.
+- Each payout is posted in `#booster-rewards` and in the staff log.
+- `/booster` shows the member's streak and when the next week is due.
+
 ## Recovery
 
 | Situation | What to do |

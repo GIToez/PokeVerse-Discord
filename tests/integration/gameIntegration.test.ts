@@ -5,7 +5,7 @@ import { Metrics } from "../../src/utils/metrics.js";
 import { FakeBridgeServer, waitFor } from "../helpers/fakeBridgeServer.js";
 import type { LinkSummary } from "../../src/integrations/pokeverse/protocol.js";
 import type { StateStore } from "../../src/utils/stateStore.js";
-import { DEV_GUILD, FakeChannels, FakeGuild, LINKED_USER, RATTATA, TRAINER, linkSummary, makeConfig, makeStore, setUpGuild } from "../helpers/fakes.js";
+import { DEV_GUILD, FakeChannel, FakeChannels, FakeGuild, LINKED_USER, RATTATA, TRAINER, linkSummary, makeConfig, makeStore, setUpGuild } from "../helpers/fakes.js";
 
 const SECRET = "integration-secret-0123456789";
 const cleanup: Array<() => Promise<void> | void> = [];
@@ -149,7 +149,13 @@ const OTHER_USER = "223456789012345678";
 
 /** The bot pipeline against a fake game that supports player sessions and account linking. */
 async function phase2(
-  options: { features?: string[]; before?: (guild: FakeGuild, links: Map<string, LinkSummary>, store: StateStore) => void } = {},
+  options: {
+    features?: string[];
+    before?: (guild: FakeGuild, links: Map<string, LinkSummary>, store: StateStore) => void;
+    env?: Record<string, string>;
+    /** Extra request handlers; return undefined to fall through. */
+    handle?: (method: string, params: Record<string, unknown>) => unknown;
+  } = {},
 ) {
   const links = new Map<string, LinkSummary>();
   const requests: string[] = [];
@@ -159,6 +165,10 @@ async function phase2(
     features: options.features ?? ["playerSessions", "accountLinking"],
     onRequest: (method, params): unknown => {
       requests.push(method);
+      const handled = options.handle?.(method, params as Record<string, unknown>);
+      if (handled !== undefined) {
+        return handled;
+      }
       switch (method) {
         case "server.status":
           return { serverName: "PokeVerse", state: "normal", playersOnline: online.length, maxPlayers: 1000, uptime: 120, bootId: server.bootId };
@@ -175,9 +185,10 @@ async function phase2(
   });
   await server.start();
   cleanup.push(() => server.stop());
-  const config = makeConfig({ BRIDGE_PORT: String(server.port), BRIDGE_SECRET: SECRET, DISCORD_ADMIN_USER_IDS: ADMIN_ID });
+  const config = makeConfig({ BRIDGE_PORT: String(server.port), BRIDGE_SECRET: SECRET, DISCORD_ADMIN_USER_IDS: ADMIN_ID, ...options.env });
   const store = makeStore(config);
   const channels = new FakeChannels();
+  channels.channels.set("boosterRewards", new FakeChannel("300000000000000099"));
   const guild = new FakeGuild();
   guild.permissions = [...guild.permissions, "ManageRoles", "ManageNicknames"];
   const integration = new GameIntegration({ config, store, channels, guild: () => guild, logger: silentLogger, metrics: new Metrics(), reconnectSyncDelayMs: 50 });
@@ -188,7 +199,7 @@ async function phase2(
   cleanup.push(() => integration.stop());
   await waitFor(() => integration.game.connected, 3000, "bridge connection");
   return {
-    server, integration, guild, store, sink, links, requests,
+    server, integration, guild, store, sink, links, requests, channels,
     setOnline: (sessions: typeof online) => {
       online = sessions;
     },
@@ -280,5 +291,34 @@ describe("player activity and account linking pipeline", () => {
     await new Promise((resolve) => setTimeout(resolve, 200));
     await integration.idle();
     expect(requests.filter((method) => method.startsWith("link.") || method.startsWith("admin."))).toEqual([]);
+  });
+
+  it("deposits a booster's completed week through the bridge and posts it", async () => {
+    const weeks: Array<Record<string, unknown>> = [];
+    const since = Date.now() - 8 * 86_400_000;
+    const { integration, sink, channels } = await phase2({
+      features: ["playerSessions", "accountLinking", "boosterRewards"],
+      env: { BOOSTER_REWARDS_ENABLED: "true" },
+      before: (guild, links) => {
+        guild.addMember(LINKED_USER, { premiumSince: since });
+        links.set(LINKED_USER, linkSummary({ linkedAt: Math.floor((since - 86_400_000) / 1000) }));
+      },
+      handle: (method, params) => {
+        if (method === "booster.week") {
+          weeks.push(params);
+          return { deposited: true, week: params.week, weekly: 1, loyalty: 0, yearly: 0, total: 1 };
+        }
+        return undefined;
+      },
+    });
+    await waitFor(() => weeks.length === 1, 3000, "booster deposit after the link resync");
+    expect(weeks[0]).toEqual({ discordUserId: LINKED_USER, boostSince: Math.floor(since / 1000), week: 1 });
+    const rewards = channels.channel("boosterRewards");
+    await waitFor(() => rewards.sent.length === 1, 3000, "reward post");
+    expect(rewards.sent[0]!.message.embeds![0]!.description).toContain("**Total Deposited: 1 Soul Coin**");
+    await waitFor(() => sink.sent.some((item) => item.message.embeds?.[0]?.title === "Booster reward"), 3000, "staff record");
+    await integration.linking!.resyncAll();
+    await integration.boosters!.idle();
+    expect(weeks).toHaveLength(1);
   });
 });

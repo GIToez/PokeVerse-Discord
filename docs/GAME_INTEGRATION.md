@@ -263,6 +263,8 @@ server -> {"type":"response","requestId":"1","ok":true,"result":{...}}
 | `report.setStatus` | A status tag picked on a report post |
 | `report.get` | A report's current state |
 | `report.screenshot` | The report's screenshot, 12,000 base64 characters at a time |
+| `booster.rules` | Reward amounts for the `/booster` text |
+| `booster.week` | Pays one completed boost week (`discordUserId`, `boostSince` in Unix seconds, `week`); the game checks it is due, linked, not paid yet and not an old streak |
 
 The bot validates every message with zod schemas (`src/integrations/pokeverse/protocol.ts`)
 and ignores unknown event kinds, so the game can add events without breaking older bots.
@@ -278,6 +280,7 @@ The protocol version stays `1`; everything Phase 2 added is optional. The welcom
 | Phase 2, `playerSessions` off | No login/logout embeds; linking works. |
 | Phase 2, `accountLinking` off | Activity log works; account commands answer that linking is not available, as with a Phase 1 server. |
 | Phase 2, both on | Everything. |
+| No `boosterRewards` feature | Booster rewards are not paid; `/booster` and `/pokeverse status` say the game server does not support them. |
 
 A Phase 1 bot connected to a Phase 2 server ignores the new event kinds and never sends the
 new requests, so the two can be upgraded in either order.
