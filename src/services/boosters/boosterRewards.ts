@@ -90,12 +90,16 @@ function communityEnabled(rules: BoosterRules): boolean {
 /** "Right now: 14 boosts give +2. 1 more boost for +3." */
 function communityNow(rules: BoosterRules, boosts: number): string {
   const bonus = communityBonus(rules, boosts);
-  const now = `Right now: **${boostsText(boosts)}** give **+${coins(bonus)}**.`;
+  const more = (bonus + 1) * rules.communityEvery - boosts;
+  const moreText = `${more} more boost${more === 1 ? "" : "s"}`;
+  if (bonus === 0) {
+    return `Right now: **${boostsText(boosts)}** on the server. ${moreText} for the first +1.`;
+  }
+  const now = `Right now: **${boostsText(boosts)}** ${boosts === 1 ? "gives" : "give"} **+${coins(bonus)}**.`;
   if (bonus >= rules.communityMax) {
     return `${now} That is the maximum!`;
   }
-  const more = (bonus + 1) * rules.communityEvery - boosts;
-  return `${now} ${more} more boost${more === 1 ? "" : "s"} for +${bonus + 1}.`;
+  return `${now} ${moreText} for +${bonus + 1}.`;
 }
 
 function perksAt(rules: BoosterRules, level: number): string[] {

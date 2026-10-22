@@ -342,6 +342,11 @@ describe("booster rewards", () => {
         "💎 Every 7 days", "🎁 Every 4 weeks (monthly)", "🤝 Community bonus", "🏆 Every year",
         "🚀 Server boost perks (everyone in the game)", "🔗 How to get them", "📌 Good to know",
       ]);
+      guild.boostCount = 1;
+      guild.boostLevel = 0;
+      await service.ensureInfoPost();
+      expect(fieldsOf(channels.channel("boosterRewards").edits[0]!.message.embeds![0])["🤝 Community bonus"])
+        .toContain("Right now: **1 boost** on the server. 4 more boosts for the first +1.");
       expect(fields["🤝 Community bonus"]).toBe(
         "Every 4th week, +1 Soul Coin for every 5 boosts on the server, up to +5 (at 25 boosts). Everyone's boosts count!\n" +
         "Right now: **9 boosts** give **+1 Soul Coin**. 1 more boost for +2.");
