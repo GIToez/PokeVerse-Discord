@@ -102,6 +102,11 @@ function communityNow(rules: BoosterRules, boosts: number): string {
   return `${now} ${moreText} for +${bonus + 1}.`;
 }
 
+/** The game's perks, or the planned ones while the game lists none. */
+function withPerks(rules: BoosterRules): BoosterRules {
+  return rules.perks.length > 0 ? rules : { ...rules, perks: DEFAULT_BOOSTER_RULES.perks };
+}
+
 function perksAt(rules: BoosterRules, level: number): string[] {
   return rules.perks.filter((perk) => perk.level <= level).map((perk) => perk.text);
 }
@@ -200,7 +205,7 @@ export class BoosterRewards {
       if (saved && saved.level !== boosts.level) {
         this.options.logger.info("Server boost level changed", { from: saved.level, to: boosts.level, boosts: boosts.count });
         this.options.metrics.increment("boosters.level_changes");
-        this.postLevelChange(saved.level, boosts, (await this.rules()) ?? DEFAULT_BOOSTER_RULES);
+        this.postLevelChange(saved.level, boosts, withPerks((await this.rules()) ?? DEFAULT_BOOSTER_RULES));
       }
       await this.sendLevel(boosts);
       await this.ensureInfoPost();
@@ -303,7 +308,7 @@ export class BoosterRewards {
       return;
     }
     const rules = (await this.rules()) ?? DEFAULT_BOOSTER_RULES;
-    const embed = boosterInfoEmbed(rules, this.options.guild()?.boosts() ?? { count: 0, level: 0 });
+    const embed = boosterInfoEmbed(withPerks(rules), this.options.guild()?.boosts() ?? { count: 0, level: 0 }, this.perksAvailable);
     const text = JSON.stringify(embed);
     const saved = this.options.store.get().boosterInfo;
     try {
@@ -621,7 +626,7 @@ export class BoosterRewards {
  * The first post in #booster-rewards and its live tracker: what boosters earn, the community
  * bonus and the server-wide perks at the server's current boosts.
  */
-export function boosterInfoEmbed(rules: BoosterRules, boosts: { count: number; level: number }): APIEmbed {
+export function boosterInfoEmbed(rules: BoosterRules, boosts: { count: number; level: number }, perksActive = true): APIEmbed {
   const community = communityEnabled(rules);
   const fields: NonNullable<APIEmbed["fields"]> = [
     { name: "💎 Every 7 days", value: `+${coins(rules.weekly)} for each full week of continuous boosting.` },
@@ -637,7 +642,7 @@ export function boosterInfoEmbed(rules: BoosterRules, boosts: { count: number; l
   if (community) {
     const full = rules.communityMax * rules.communityEvery;
     fields.push({
-      name: "🤝 Community bonus",
+      name: "🤝 Bonus coins for total server boosts",
       value: `Every ${rules.loyaltyEvery === 4 ? "4th week" : `${rules.loyaltyEvery}th week`}, +1 Soul Coin for every ` +
         `${rules.communityEvery} boosts on the server, up to +${rules.communityMax} (at ${full} boosts). Everyone's boosts count!\n` +
         communityNow(rules, boosts.count),
@@ -657,15 +662,18 @@ export function boosterInfoEmbed(rules: BoosterRules, boosts: { count: number; l
     const levels = [1, 2, 3].filter((level) => perksOf(rules, level));
     const next = nextLevelText(rules, boosts, "unlock");
     fields.push({
-      name: "🚀 Server boost perks (everyone in the game)",
+      name: "🚀 In-game perks for the whole server",
       value: [
+        "Every server boost level gives everyone playing PokeVerse a bonus, boosters or not:",
         ...levels.map((level) =>
           `${boosts.level >= level ? "✅" : "🔒"} Level ${level} (${boostsText(BOOST_LEVEL_BOOSTS[level]!)}): ${perksOf(rules, level)}`),
         "",
-        `The server is **Level ${boosts.level}** with **${boostsText(boosts.count)}**.${next ? ` ${next}` : " Every perk is active!"}`,
+        `The server is **Level ${boosts.level}** with **${boostsText(boosts.count)}**.${next ? ` ${next}` : " Every perk is unlocked!"}`,
+        ...(perksActive ? [] : ["⏳ The perks are switched on in the game soon."]),
       ].join("\n"),
     });
   }
+
   fields.push(
     {
       name: "🔗 How to get them",

@@ -127,7 +127,8 @@ the ones below; game feature `boostPerks`):
 
 The bot tells the game the level at startup, when the game connects and when Discord
 reports a change; the game keeps the last level it was told. A level change is announced in
-`#booster-rewards`.
+`#booster-rewards`. Until the game applies perks, the info post lists these planned perks with
+a note that they are switched on soon.
 
 The amounts are set in the game's `config.lua`; the bot only reports which week of which
 boost is complete. The game refuses a week that is not due yet, that was due before the

@@ -302,7 +302,7 @@ describe("booster rewards", () => {
       expect(sink.sent).toHaveLength(1);
       expect(sink.edits).toHaveLength(1);
       const fields = sink.edits[0]!.message.embeds![0]!.fields!.map((field) => field.name);
-      expect(fields).toEqual(["💎 Every 7 days", "🔗 How to get them", "📌 Good to know"]);
+      expect(fields).toEqual(["💎 Every 7 days", "🚀 In-game perks for the whole server", "🔗 How to get them", "📌 Good to know"]);
       await sink.delete(sink.sent[0]!.id);
       api.rulesValue = { ...api.rulesValue, weekly: 1 };
       service.onConnected();
@@ -339,18 +339,19 @@ describe("booster rewards", () => {
       await service.ensureInfoPost();
       const fields = fieldsOf(channels.channel("boosterRewards").sent[0]!.message.embeds![0]);
       expect(Object.keys(fields)).toEqual([
-        "💎 Every 7 days", "🎁 Every 4 weeks (monthly)", "🤝 Community bonus", "🏆 Every year",
-        "🚀 Server boost perks (everyone in the game)", "🔗 How to get them", "📌 Good to know",
+        "💎 Every 7 days", "🎁 Every 4 weeks (monthly)", "🤝 Bonus coins for total server boosts", "🏆 Every year",
+        "🚀 In-game perks for the whole server", "🔗 How to get them", "📌 Good to know",
       ]);
       guild.boostCount = 1;
       guild.boostLevel = 0;
       await service.ensureInfoPost();
-      expect(fieldsOf(channels.channel("boosterRewards").edits[0]!.message.embeds![0])["🤝 Community bonus"])
+      expect(fieldsOf(channels.channel("boosterRewards").edits[0]!.message.embeds![0])["🤝 Bonus coins for total server boosts"])
         .toContain("Right now: **1 boost** on the server. 4 more boosts for the first +1.");
-      expect(fields["🤝 Community bonus"]).toBe(
+      expect(fields["🤝 Bonus coins for total server boosts"]).toBe(
         "Every 4th week, +1 Soul Coin for every 5 boosts on the server, up to +5 (at 25 boosts). Everyone's boosts count!\n" +
         "Right now: **9 boosts** give **+1 Soul Coin**. 1 more boost for +2.");
-      expect(fields["🚀 Server boost perks (everyone in the game)"]).toBe([
+      expect(fields["🚀 In-game perks for the whole server"]).toBe([
+        "Every server boost level gives everyone playing PokeVerse a bonus, boosters or not:",
         "✅ Level 1 (2 boosts): +5% experience",
         "✅ Level 2 (7 boosts): +5% catch rate",
         "🔒 Level 3 (14 boosts): +10% shiny spawn rate",
@@ -376,7 +377,7 @@ describe("booster rewards", () => {
       await service.refreshServerBoosts();
       await queue.idle();
       expect(sink.sent).toHaveLength(1);
-      expect(sink.edits.at(-1)!.message.embeds![0]!.fields!.find((field) => field.name === "🤝 Community bonus")!.value)
+      expect(sink.edits.at(-1)!.message.embeds![0]!.fields!.find((field) => field.name === "🤝 Bonus coins for total server boosts")!.value)
         .toContain("**10 boosts** give **+2 Soul Coins**");
 
       guild.boostCount = 25;
@@ -388,7 +389,7 @@ describe("booster rewards", () => {
         title: "🚀 PokeVerse reached Server Boost Level 3!",
         description: "Thanks to **25 boosts**, everyone in the game now gets:\n• +5% experience\n• +5% catch rate\n• +10% shiny spawn rate",
       });
-      expect(fieldsOf(sink.edits.at(-1)!.message.embeds![0])["🤝 Community bonus"]).toContain("That is the maximum!");
+      expect(fieldsOf(sink.edits.at(-1)!.message.embeds![0])["🤝 Bonus coins for total server boosts"]).toContain("That is the maximum!");
 
       guild.boostCount = 6;
       guild.boostLevel = 1;
@@ -401,12 +402,18 @@ describe("booster rewards", () => {
       expect(api.levels.at(-1)).toEqual({ level: 1, boosts: 6 });
     });
 
-    it("does not send the level to a game without boost perks", async () => {
-      const { service, guild, api } = setup();
+    it("does not send the level to a game without boost perks, but still shows the planned perks", async () => {
+      const { service, guild, api, channels } = setup();
       api.features.delete("boostPerks");
+      api.rulesValue = { ...api.rulesValue, perks: [] };
       guild.boostLevel = 1;
+      guild.boostCount = 2;
       await service.refreshServerBoosts();
       expect(api.levels).toEqual([]);
+      const perks = fieldsOf(channels.channel("boosterRewards").sent[0]!.message.embeds![0])["🚀 In-game perks for the whole server"];
+      expect(perks).toContain("✅ Level 1 (2 boosts): +5% experience");
+      expect(perks).toContain("🔒 Level 3 (14 boosts): +10% shiny spawn rate");
+      expect(perks).toContain("⏳ The perks are switched on in the game soon.");
     });
   });
 });
