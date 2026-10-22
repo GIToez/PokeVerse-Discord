@@ -50,14 +50,29 @@ jobs:
     needs: check
     runs-on: ubuntu-24.04
     timeout-minutes: 45
+    # PV_GAME_READ_TOKEN: fine-grained token on GIToez/PokeVerse with only Contents: Read, needed
+    # while that repository is private. Without access the job is skipped with a warning.
+    env:
+      GAME_TOKEN: ${{ secrets.PV_GAME_READ_TOKEN || github.token }}
     steps:
       - uses: actions/checkout@v4
       - id: base
         run: echo "sha=$(cat integrations/pokeverse-game/BASE_COMMIT)" >> "$GITHUB_OUTPUT"
+      - id: access
+        name: Check access to the game repository
+        run: |
+          if git ls-remote "https://x-access-token:${GAME_TOKEN}@github.com/GIToez/PokeVerse.git" HEAD >/dev/null 2>&1; then
+            echo "ok=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "ok=false" >> "$GITHUB_OUTPUT"
+            echo "::warning title=Live test skipped::Cannot read GIToez/PokeVerse. Add the PV_GAME_READ_TOKEN secret (Contents: Read on that repository) to run the live test."
+          fi
       - name: Check out the game at the patch base
+        if: steps.access.outputs.ok == 'true'
         uses: actions/checkout@v4
         with:
           repository: GIToez/PokeVerse
+          token: ${{ env.GAME_TOKEN }}
           ref: ${{ steps.base.outputs.sha }}
           path: game
           lfs: true
@@ -67,9 +82,11 @@ jobs:
             docs
             .github
       - name: Apply the game-side bridge patches
+        if: steps.access.outputs.ok == 'true'
         working-directory: game
         run: git -c user.name=ci -c user.email=ci@localhost am --keep-cr ../integrations/pokeverse-game/patches/*.patch
       - name: Install dependencies
+        if: steps.access.outputs.ok == 'true'
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends cmake ninja-build g++ pkg-config \
@@ -78,18 +95,23 @@ jobs:
             mariadb-server lua5.1
           sudo systemctl stop mariadb || true
       - name: Build the game server
+        if: steps.access.outputs.ok == 'true'
         run: |
           cmake -S game/core/server -B game/build/server -G Ninja -DCMAKE_BUILD_TYPE=Release
           cmake --build game/build/server
-      - uses: actions/setup-node@v4
+      - if: steps.access.outputs.ok == 'true'
+        uses: actions/setup-node@v4
         with:
           node-version: ${{ env.NODE_VERSION }}
           cache: npm
-      - run: npm ci
+      - if: steps.access.outputs.ok == 'true'
+        run: npm ci
       - name: Game-side bridge test (from the patches)
+        if: steps.access.outputs.ok == 'true'
         working-directory: game
         run: scripts/test-server-linux.sh build/server/pokeverse-server
       - name: Bot live tests (real server, real game clients, in-memory Discord)
+        if: steps.access.outputs.ok == 'true'
         run: scripts/live-test.sh game game/build/server/pokeverse-server
 
   package-windows:
