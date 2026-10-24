@@ -96,7 +96,7 @@ live("live: bot against the real PokeVerse game server", () => {
     });
     channels = new FakeChannels();
     guild = new FakeGuild();
-    guild.permissions = [...guild.permissions, "ManageRoles", "ManageNicknames", "ManageThreads"];
+    guild.permissions = [...guild.permissions, "ManageRoles", "ManageNicknames", "ManageThreads", "MentionEveryone", "CreateEvents", "ManageEvents"];
     guild.addMember(LINK_USER);
     integration = new GameIntegration({ config, store: makeStore(config), channels, guild: () => guild, logger: silentLogger, metrics: new Metrics() });
     const report = await setUpGuild(integration.setup, guild, channels);
