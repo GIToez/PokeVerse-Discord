@@ -154,10 +154,19 @@ export const REQUIRED_GUILD_PERMISSIONS: PermissionName[] = [
   "CreatePublicThreads",
   "SendMessagesInThreads",
   "ManageThreads",
+  "MentionEveryone",
+  "CreateEvents",
+  "ManageEvents",
 ];
 
 /** Guild permissions only needed for the report forums (status tags are moderated, posts are archived). */
 export const REPORT_GUILD_PERMISSIONS: PermissionName[] = ["ManageThreads"];
+
+/** Only needed for staff pings of @everyone, @here and roles nobody else can ping (ANNOUNCE_STAFF_PINGS). */
+export const PING_GUILD_PERMISSIONS: PermissionName[] = ["MentionEveryone"];
+
+/** Only needed for the calendar's scheduled events (CALENDAR_SYNC_ENABLED). */
+export const CALENDAR_GUILD_PERMISSIONS: PermissionName[] = ["CreateEvents", "ManageEvents"];
 
 /** Guild permissions only needed for account linking (roles and nicknames). */
 export const LINKING_GUILD_PERMISSIONS: PermissionName[] = ["ManageRoles", "ManageNicknames"];

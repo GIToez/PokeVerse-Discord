@@ -240,8 +240,10 @@ describe("invite link", () => {
     const bits = requiredPermissionBits();
     expect(bits & 0x8n).toBe(0n);
     // View Channel, Send Messages, Embed Links, Attach Files, Read Message History, Manage Channels,
-    // Manage Roles, Manage Nicknames, Create Public Threads, Send Messages in Threads, Manage Threads
-    expect(bits).toBe(0x400n | 0x800n | 0x4000n | 0x8000n | 0x10000n | 0x10n | 0x10000000n | 0x8000000n | 0x800000000n | 0x4000000000n | 0x400000000n);
+    // Manage Roles, Manage Nicknames, Create Public Threads, Send Messages in Threads, Manage Threads,
+    // Mention Everyone, Create Events, Manage Events
+    expect(bits).toBe(0x400n | 0x800n | 0x4000n | 0x8000n | 0x10000n | 0x10n | 0x10000000n | 0x8000000n | 0x800000000n | 0x4000000000n | 0x400000000n |
+      0x20000n | 0x100000000000n | 0x200000000n);
     const url = new URL(inviteUrl("123456789012345678", DEV_GUILD));
     expect(url.searchParams.get("scope")).toBe("bot applications.commands");
     expect(url.searchParams.get("permissions")).toBe(bits.toString());

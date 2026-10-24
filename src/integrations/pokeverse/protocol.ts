@@ -18,8 +18,21 @@ export const welcomeSchema = z.object({
   features: z.array(z.string()).optional(),
 });
 
-export const FEATURES = { playerSessions: "playerSessions", accountLinking: "accountLinking", boosterRewards: "boosterRewards", boostPerks: "boostPerks" } as const;
+export const FEATURES = {
+  playerSessions: "playerSessions",
+  accountLinking: "accountLinking",
+  boosterRewards: "boosterRewards",
+  boostPerks: "boostPerks",
+  /** Every server-wide broadcast comes as an `announcement` event; staff broadcasts no longer need `broadcast`. */
+  announcements: "announcements",
+  /** `calendar.range` lists the game's calendar events. */
+  calendar: "calendar",
+} as const;
 export const errorSchema = z.object({ type: z.literal("error"), code: z.string() });
+
+/** The game's JSON encoder writes an empty list as {}. */
+const emptyList = (value: unknown) =>
+  value && typeof value === "object" && !Array.isArray(value) && Object.keys(value).length === 0 ? [] : value;
 
 const position = z.object({ x: z.number(), y: z.number(), z: z.number() });
 
@@ -65,8 +78,33 @@ export const spawnEventSchema = z.object({
  * Wild legendaries (game: 078-wildLegendaries.lua). One `encounterId` per legendary, from
  * its spawn to its end, so the bot can keep one thread per encounter.
  */
-export const LEGENDARY_EVENTS = ["spawn", "sighting", "flee", "end", "caught"] as const;
+export const LEGENDARY_EVENTS = [
+  "spawn", "sighting", "flee", "end", "caught",
+  /** Signs before a spawn (Mewtwo's psychic disturbance); no encounter yet. */
+  "sign",
+  /** A set appearing together (the birds, the beasts, the sleeping Regis): `members`, one encounter each. */
+  "set",
+  /** A trainer woke a sleeping Regi (`trainer`). */
+  "woke",
+  /** Mew showed its true self (`trainer`, `disguise`). */
+  "revealed",
+  /** Two legendaries met (`other`, `otherEncounterId`, `text`), or Rayquaza is coming to calm them (`calm`). */
+  "clash",
+  "calm",
+  /** A legendary given by a quest or an NPC (`trainer`); no encounter. */
+  "reward",
+] as const;
 export const LEGENDARY_END_REASONS = ["defeated", "fled", "staff", "restart", "vanished"] as const;
+
+const legendaryMemberSchema = z.object({
+  encounterId: z.number(),
+  species: z.string(),
+  dexNumber: z.number().nullish(),
+  tier: z.number().nullish(),
+  area: z.string().nullish(),
+  position: position.nullish(),
+  endsAt: z.number().nullish(),
+});
 
 export const legendaryEventSchema = z.object({
   kind: z.literal("legendary"),
@@ -86,10 +124,60 @@ export const legendaryEventSchema = z.object({
   healthPercent: z.number().nullish(),
   /** Unknown future reasons are kept as plain strings. */
   reason: z.string().nullish(),
-  /** The game's JSON encoder writes an empty list as {}. */
-  trainers: z.preprocess((value) => (value && typeof value === "object" && !Array.isArray(value) && Object.keys(value).length === 0 ? [] : value), z.array(z.string()).nullish()),
+  trainers: z.preprocess(emptyList, z.array(z.string()).nullish()),
   topTrainer: z.string().nullish(),
   trainer: z.string().nullish(),
+  /** Recommended trainer level (spawn, set, woke). */
+  level: z.number().nullish(),
+  /** A set member's spawn, or the set itself. */
+  setId: z.string().nullish(),
+  setName: z.string().nullish(),
+  /** Sleeping until a trainer wakes it (spawn, set). */
+  asleep: z.boolean().nullish(),
+  members: z.preprocess(emptyList, z.array(legendaryMemberSchema).nullish()),
+  /** What Mew was hiding as (revealed). */
+  disguise: z.string().nullish(),
+  /** The other legendary of a clash, and its encounter. */
+  other: z.string().nullish(),
+  otherEncounterId: z.number().nullish(),
+  /** The line players saw in game. */
+  text: z.string().nullish(),
+});
+
+/**
+ * Every server-wide broadcast (game: 092-announcements.lua), the same data as the news banner.
+ * Tips never come here.
+ */
+export const ANNOUNCEMENT_CATEGORIES = ["event", "legendary", "server", "staff", "milestone", "news"] as const;
+export type GameAnnouncementCategory = (typeof ANNOUNCEMENT_CATEGORIES)[number];
+
+export const announcementEventSchema = z.object({
+  kind: z.literal("announcement"),
+  /** Unknown future categories are posted as news. */
+  category: z.string(),
+  title: z.string().nullish(),
+  text: z.string(),
+  /** The broadcast as players saw it in game. */
+  full: z.string().nullish(),
+  /** The game script that sent it, like "077-eventCalendar". */
+  source: z.string().nullish(),
+  /** The staff member, for staff broadcasts. */
+  author: z.string().nullish(),
+  /**
+   * Picked by staff: "everyone", "here", "verified" or a role name. The game already dropped
+   * "everyone" and "here" for staff below Gamemaster.
+   */
+  ping: z.string().nullish(),
+  /** A calendar event starting or ending. */
+  calendar: z
+    .object({
+      key: z.string(),
+      id: z.string(),
+      state: z.string(),
+      /** "holiday", "server" (the weekend events) or "staff" (added with /calendar). */
+      type: z.string(),
+    })
+    .nullish(),
 });
 
 export const broadcastEventSchema = z.object({
@@ -230,6 +318,7 @@ export const gameEventSchema = z.discriminatedUnion("kind", [
   catchEventSchema,
   spawnEventSchema,
   legendaryEventSchema,
+  announcementEventSchema,
   broadcastEventSchema,
   restartWarningEventSchema,
   serverStateEventSchema,
@@ -259,6 +348,8 @@ export type ChatEvent = z.infer<typeof chatEventSchema>;
 export type CatchEvent = z.infer<typeof catchEventSchema>;
 export type SpawnEvent = z.infer<typeof spawnEventSchema>;
 export type LegendaryEvent = z.infer<typeof legendaryEventSchema>;
+export type AnnouncementEvent = z.infer<typeof announcementEventSchema>;
+export type LegendaryMember = z.infer<typeof legendaryMemberSchema>;
 export type BroadcastEvent = z.infer<typeof broadcastEventSchema>;
 export type RestartWarningEvent = z.infer<typeof restartWarningEventSchema>;
 export type ServerStateEvent = z.infer<typeof serverStateEventSchema>;
@@ -494,3 +585,38 @@ export const reportScreenshotResultSchema = z.object({
   data: z.string().optional(),
 });
 export type ReportScreenshotResult = z.infer<typeof reportScreenshotResultSchema>;
+
+/** The Discord roles staff can ping from the game's Admin window (announcements.roles). */
+export const announcementRolesResultSchema = z.object({ roles: z.number().int().min(0) });
+export type AnnouncementRolesResult = z.infer<typeof announcementRolesResultSchema>;
+
+/** One occurrence of a calendar event (game: EventCalendar.rangeData). */
+export const calendarEventSchema = z.object({
+  /** Unique per occurrence, like "halloween:1793491200". */
+  key: z.string(),
+  /** The holiday, server event or "staff<id>" it belongs to. */
+  id: z.string(),
+  name: z.string(),
+  description: z.string().nullish(),
+  color: z.string().nullish(),
+  startsAt: z.number(),
+  endsAt: z.number(),
+  bonuses: z.preprocess(
+    emptyList,
+    z.array(z.object({ kind: z.string(), label: z.string().nullish(), value: z.number() })).default([]),
+  ),
+  holiday: z.boolean().optional(),
+  /** Turned on by staff right now, not planned. */
+  forced: z.boolean().optional(),
+});
+export type CalendarEvent = z.infer<typeof calendarEventSchema>;
+
+export const calendarRangeResultSchema = z.object({
+  from: z.number(),
+  to: z.number(),
+  events: z.preprocess(
+    emptyList,
+    z.array(calendarEventSchema),
+  ),
+});
+export type CalendarRangeResult = z.infer<typeof calendarRangeResultSchema>;

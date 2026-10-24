@@ -38,7 +38,7 @@ node dist/bot.cjs invite          # or: configure-discord-dev.bat prints it
 ```
 
 The link uses the scopes `bot applications.commands` and exactly these permissions
-(integer `326820285456`). **Administrator is not requested.**
+(integer `17927596395536`). **Administrator is not requested.**
 
 | Permission | Why |
 | --- | --- |
@@ -53,16 +53,21 @@ The link uses the scopes `bot applications.commands` and exactly these permissio
 | Create Public Threads | One thread per wild legendary in `#legendary-spawns` |
 | Send Messages in Threads | Post the legendary's sightings and end in its thread, and report updates in their posts |
 | Manage Threads | Report posts: set their status tags (moderated tags), rename and archive them |
+| Mention Everyone | Staff announcements that ping @everyone or @here, and roles that aren't mentionable |
+| Create Events | Put the game's event calendar in the server's Events |
+| Manage Events | Update, start, end and remove those events |
 
 Manage Channels is only needed for automatic setup. If you prefer, create the channels
 yourself, assign them with `/pokeverse channel`, and remove the permission afterwards.
 Manage Roles and Manage Nicknames are only needed with account linking (`LINKING_ENABLED`),
 Manage Threads only with the report forums (`BUG_REPORTS_ENABLED`, `PLAYER_REPORTS_ENABLED`).
+Mention Everyone only for staff pings (`ANNOUNCE_STAFF_PINGS`; without it @everyone isn't offered
+in game), Create Events and Manage Events only for the calendar (`CALENDAR_SYNC_ENABLED`).
 Optional: **View Audit Log** lets the bot name the staff member who changed a report's status
 tag (otherwise the game shows "Discord staff").
 
 An already invited bot keeps its old permissions: add Manage Roles, Manage Nicknames,
-Create Public Threads, Send Messages in Threads and Manage Threads to the bot's role (**Server Settings > Roles > PokeVerse**) or open the new invite link.
+Create Public Threads, Send Messages in Threads, Manage Threads, Mention Everyone, Create Events and Manage Events to the bot's role (**Server Settings > Roles > PokeVerse**) or open the new invite link.
 
 Then run setup again (`/pokeverse setup`, or `setup` on the command line). For channels
 that already exist it changes only two things, and reports them as "updated":

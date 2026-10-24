@@ -33,9 +33,51 @@ const legendaryEncounterSchema = z.object({
   endsAt: z.number().optional(),
   startedAt: z.number(),
   endedAt: z.number().optional(),
+  /** A member of a set: the key of its post in `legendarySets`. */
+  set: z.string().optional(),
+  level: z.number().optional(),
+  asleep: z.boolean().optional(),
+  /** Mew, found hiding as another Pokemon. */
+  revealed: z.boolean().optional(),
 });
 
 export type LegendaryEncounterRecord = z.infer<typeof legendaryEncounterSchema>;
+
+const legendarySetSchema = z.object({
+  channelId: z.string(),
+  messageId: z.string(),
+  threadId: z.string().optional(),
+  name: z.string(),
+  level: z.number().optional(),
+  asleep: z.boolean().optional(),
+  startedAt: z.number(),
+  members: z.array(z.object({
+    encounterId: z.number(),
+    species: z.string(),
+    dexNumber: z.number().optional(),
+    area: z.string().optional(),
+    /** How it ended, or "awake" for a woken Regi. */
+    outcome: z.string().optional(),
+    detail: z.string().optional(),
+    ended: z.boolean().optional(),
+  })),
+});
+
+export type LegendarySetRecord = z.infer<typeof legendarySetSchema>;
+
+/** A Discord scheduled event the bot made for a game calendar occurrence. */
+const calendarEventSchema = z.object({
+  eventId: z.string(),
+  name: z.string(),
+  description: z.string(),
+  /** Unix seconds, as the game has them (the Discord event may start a minute later when created late). */
+  startsAt: z.number(),
+  endsAt: z.number(),
+  status: z.enum(["scheduled", "active"]),
+  remindedAt: z.number().optional(),
+});
+
+export type CalendarEventRecord = z.infer<typeof calendarEventSchema>;
 
 const reportPostSchema = z.object({
   kind: z.string(),
@@ -86,6 +128,10 @@ const stateSchema = z.object({
   linkedMembers: z.record(z.string()).default({}),
   /** Wild legendary encounters with a Discord post, by the game's encounter id. */
   legendaryEncounters: z.record(legendaryEncounterSchema).default({}),
+  /** One post for a set of legendaries that appeared together, by "<set id>:<first encounter id>". */
+  legendarySets: z.record(legendarySetSchema).default({}),
+  /** Discord scheduled events for the game's calendar, by the occurrence's key. */
+  calendarEvents: z.record(calendarEventSchema).default({}),
   /** Forum posts of in-game reports, by the game's report id. */
   reportPosts: z.record(reportPostSchema).default({}),
   /** Members seen boosting the server, by Discord user id (booster rewards). */
@@ -114,7 +160,7 @@ export class StateStore {
 
   private load(): BotState {
     if (!existsSync(this.file)) {
-      return { version: 1, profile: this.profile, channels: {}, roles: {}, linkedMembers: {}, legendaryEncounters: {}, reportPosts: {}, boosters: {} };
+      return { version: 1, profile: this.profile, channels: {}, roles: {}, linkedMembers: {}, legendaryEncounters: {}, legendarySets: {}, calendarEvents: {}, reportPosts: {}, boosters: {} };
     }
     const parsed = stateSchema.parse(JSON.parse(readFileSync(this.file, "utf8")));
     if (parsed.profile !== this.profile) {

@@ -1,6 +1,8 @@
 import type { BridgeClient } from "./bridgeClient.js";
 import {
   adminSessionsResultSchema,
+  announcementRolesResultSchema,
+  calendarRangeResultSchema,
   boostLevelResultSchema,
   boosterRulesResultSchema,
   boosterWeekResultSchema,
@@ -23,6 +25,7 @@ import {
   type BoosterRules,
   type BoosterWeekResult,
   type BridgeConfigResult,
+  type CalendarRangeResult,
   type LinkAccountResult,
   type LinkCharactersResult,
   type LinkListResult,
@@ -64,6 +67,16 @@ export interface LinkApi {
 export interface AdminApi {
   readonly connected: boolean;
   sessions(): Promise<AdminSessionsResult>;
+}
+
+/** Announcements and the calendar. */
+export interface AnnouncementApi {
+  readonly connected: boolean;
+  hasFeature(feature: string): boolean;
+  /** Tells the game which Discord roles staff can ping from the Admin window. Resolves with how many it kept. */
+  roles(roles: string[], everyone: boolean): Promise<number>;
+  /** The calendar's events overlapping [from, to] (unix seconds). */
+  calendarRange(from: number, to: number): Promise<CalendarRangeResult>;
 }
 
 /** In-game reports: a status tag picked on a forum post answers the report; screenshots are read in slices. */
@@ -150,5 +163,17 @@ export function createReportApi(client: BridgeClient): ReportApi {
       client.request("report.setStatus", { id, status, by, ...(note ? { note } : {}) }, reportSetStatusResultSchema),
     get: (id) => client.request("report.get", { id }, reportGetResultSchema),
     screenshot: (id, offset, length) => client.request("report.screenshot", { id, offset, length }, reportScreenshotResultSchema),
+  };
+}
+
+export function createAnnouncementApi(client: BridgeClient): AnnouncementApi {
+  return {
+    get connected() {
+      return client.connected;
+    },
+    hasFeature: (feature) => client.hasFeature(feature),
+    roles: async (roles, everyone) =>
+      (await client.request("announcements.roles", { roles, everyone }, announcementRolesResultSchema)).roles,
+    calendarRange: (from, to) => client.request("calendar.range", { from, to }, calendarRangeResultSchema),
   };
 }

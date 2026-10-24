@@ -23,6 +23,10 @@ export interface OutgoingMessage {
   buttons?: OutgoingButton[];
   /** Users this message may ping; every other mention stays silent. */
   mentionUserIds?: string[];
+  /** Roles this message may ping. */
+  mentionRoleIds?: string[];
+  /** The message may ping @everyone and @here. */
+  mentionEveryone?: boolean;
 }
 
 export interface OutgoingButton {
@@ -124,6 +128,21 @@ export interface RoleInfo {
   /** The bot's highest role is above this role, so the bot can assign it. */
   assignable: boolean;
   administrator: boolean;
+  /** Anyone can ping it; other roles only ping with Mention Everyone. */
+  mentionable?: boolean;
+}
+
+export type ScheduledEventStatus = "scheduled" | "active" | "completed" | "canceled";
+
+/** A Discord scheduled event the bot made for a game calendar event (an external event, "in PokeVerse"). */
+export interface ScheduledEventSpec {
+  name: string;
+  description: string;
+  /** Unix milliseconds. */
+  startsAt: number;
+  endsAt: number;
+  location: string;
+  image?: OutgoingFile;
 }
 
 export interface MemberInfo {
@@ -180,4 +199,14 @@ export interface GuildPort {
   setNickname(userId: string, nickname: string | null, reason: string): Promise<void>;
   /** Active server boosts (all members together) and the server boost level, 0-3. */
   boosts(): { count: number; level: number };
+  /** Returns the event's id. */
+  createScheduledEvent(spec: ScheduledEventSpec, reason: string): Promise<string>;
+  /** Resolves false when the event no longer exists. A started event only takes a new end, name and description. */
+  editScheduledEvent(
+    eventId: string,
+    change: Partial<ScheduledEventSpec> & { status?: Exclude<ScheduledEventStatus, "scheduled"> },
+    reason: string,
+  ): Promise<boolean>;
+  /** Resolves false when the event no longer exists. */
+  deleteScheduledEvent(eventId: string): Promise<boolean>;
 }

@@ -10,6 +10,8 @@ import {
   LINKING_GUILD_PERMISSIONS,
   REPORT_GUILD_PERMISSIONS,
   REQUIRED_GUILD_PERMISSIONS,
+  PING_GUILD_PERMISSIONS,
+  CALENDAR_GUILD_PERMISSIONS,
   type ChannelDefinition,
 } from "./channels.js";
 
@@ -64,6 +66,9 @@ export interface SetupOptions {
   reports: { bugs: boolean; players: boolean };
   /** The #booster-rewards channel. */
   boosters?: boolean;
+  /** Staff pings (Mention Everyone) and the calendar sync (Create and Manage Events). */
+  pings?: boolean;
+  calendar?: boolean;
 }
 
 const DEFAULT_OPTIONS: SetupOptions = {
@@ -516,11 +521,13 @@ export class ChannelSetup {
     parts: Omit<SetupReport, "guildId" | "missingGuildPermissions" | "ok">,
   ): SetupReport {
     const granted = guild.botPermissions();
-    const { linking, reports } = this.options;
+    const { linking, reports, pings, calendar } = this.options;
     const needed = REQUIRED_GUILD_PERMISSIONS.filter(
       (permission) =>
         (linking.enabled || !LINKING_GUILD_PERMISSIONS.includes(permission)) &&
-        (reports.bugs || reports.players || !REPORT_GUILD_PERMISSIONS.includes(permission)),
+        (reports.bugs || reports.players || !REPORT_GUILD_PERMISSIONS.includes(permission)) &&
+        (pings || !PING_GUILD_PERMISSIONS.includes(permission)) &&
+        (calendar || !CALENDAR_GUILD_PERMISSIONS.includes(permission)),
     );
     const missingGuildPermissions = granted.includes("Administrator")
       ? []

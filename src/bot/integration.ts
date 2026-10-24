@@ -3,6 +3,7 @@ import { CommandRouter } from "../commands/router.js";
 import { BridgeClient, type ConnectedInfo } from "../integrations/pokeverse/bridgeClient.js";
 import {
   createAdminApi,
+  createAnnouncementApi,
   createBoosterApi,
   createGameApi,
   createLinkApi,
@@ -18,6 +19,7 @@ import { GeoIp } from "../services/activity/geoip.js";
 import { LinkService, type NicknameMode, type SyncResult } from "../services/linking/linkService.js";
 import { Announcer } from "../services/announcements/announcer.js";
 import { BoosterRewards } from "../services/boosters/boosterRewards.js";
+import { CalendarSync } from "../services/calendar/calendarSync.js";
 import { CatchAnnouncer } from "../services/catches/catchAnnouncer.js";
 import { ChatRelay } from "../services/chat/chatRelay.js";
 import { ArtworkResolver } from "../services/pokemon/artwork.js";
@@ -59,6 +61,7 @@ export class GameIntegration {
   readonly spawns: SpawnAnnouncer;
   readonly legendaries: LegendaryEncounters;
   readonly announcer: Announcer;
+  readonly calendar: CalendarSync;
   readonly status: StatusService;
   readonly setup: ChannelSetup;
   readonly commands: CommandRouter;
@@ -70,6 +73,8 @@ export class GameIntegration {
   readonly boosters: BoosterRewards | undefined;
   private readonly queues: Record<string, DeliveryQueue>;
   private resyncTimer: NodeJS.Timeout | undefined;
+  private rolesTimer: NodeJS.Timeout | undefined;
+  private rolesInterval: NodeJS.Timeout | undefined;
 
   constructor(private readonly options: GameIntegrationOptions) {
     const { config, logger, metrics, store, channels } = options;
@@ -139,9 +144,29 @@ export class GameIntegration {
       metrics,
       now: options.now,
     });
+    const announcementApi = createAnnouncementApi(this.bridge);
+    this.calendar = new CalendarSync({
+      enabled: config.announcements.calendar,
+      reminders: config.announcements.reminders,
+      api: announcementApi,
+      guild: options.guild,
+      channels,
+      store,
+      queue: this.queues.announcements!,
+      logger: logger.child({ component: "calendar" }),
+      metrics,
+      now: options.now,
+    });
     this.announcer = new Announcer({
       broadcasts: config.announcements.broadcasts,
       restartWarnings: config.announcements.restartWarnings,
+      categories: config.announcements.categories,
+      pings: config.announcements.pings,
+      staffPings: config.announcements.staffPings,
+      verifiedRoleName: config.linking.verifiedRoleName,
+      guild: options.guild,
+      api: announcementApi,
+      calendarLink: (key) => this.calendar.link(key),
       maxEventAgeSeconds: 600,
       channels,
       queue: this.queues.announcements!,
@@ -172,6 +197,8 @@ export class GameIntegration {
       },
       reports: { bugs: config.reports.bugs, players: config.reports.players },
       boosters: config.boosters.enabled,
+      pings: config.announcements.staffPings,
+      calendar: config.announcements.calendar,
     });
     this.reports = new ReportForums({
       config: config.reports,
@@ -278,11 +305,25 @@ export class GameIntegration {
     this.activity?.start();
     this.linking?.start();
     this.boosters?.start();
+    this.calendar.start();
+    this.rolesInterval = setInterval(() => this.syncRoles(), 15 * 60_000);
+    this.rolesInterval.unref();
+  }
+
+  /** The Admin window's "Ping on Discord" list. */
+  syncRoles(): void {
+    this.announcer.syncRoles().catch((error: unknown) => {
+      this.options.metrics.increment("announcements.roles_failed");
+      this.options.logger.warn("Could not send the pingable roles to the game", { error });
+    });
   }
 
   async stop(): Promise<void> {
     this.status.stop();
     clearTimeout(this.resyncTimer);
+    clearTimeout(this.rolesTimer);
+    clearInterval(this.rolesInterval);
+    this.calendar.stop();
     this.activity?.stop();
     this.linking?.stop();
     this.boosters?.stop();
@@ -317,6 +358,9 @@ export class GameIntegration {
           break;
         case "legendary":
           this.legendaries.handle({ ...envelope, event });
+          break;
+        case "announcement":
+          this.announcer.handleAnnouncement({ ...envelope, event });
           break;
         case "broadcast":
           this.announcer.handleBroadcast({ ...envelope, event });
@@ -380,6 +424,10 @@ export class GameIntegration {
     });
     this.activity?.onConnected(info);
     this.boosters?.onConnected();
+    this.calendar.onConnected(this.options.reconnectSyncDelayMs ?? 5000);
+    clearTimeout(this.rolesTimer);
+    this.rolesTimer = setTimeout(() => this.syncRoles(), this.options.reconnectSyncDelayMs ?? 5000);
+    this.rolesTimer.unref();
     const linking = this.linking;
     if (linking) {
       clearTimeout(this.resyncTimer);

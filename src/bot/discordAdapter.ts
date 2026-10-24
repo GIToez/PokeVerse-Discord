@@ -4,6 +4,9 @@ import {
   AttachmentBuilder,
   ChannelType,
   DiscordAPIError,
+  GuildScheduledEventEntityType,
+  GuildScheduledEventPrivacyLevel,
+  GuildScheduledEventStatus,
   MessageFlags,
   OverwriteType,
   PermissionFlagsBits,
@@ -38,6 +41,8 @@ import type {
   PermissionName,
   PermissionOverwriteSpec,
   RoleInfo,
+  ScheduledEventSpec,
+  ScheduledEventStatus,
   ThreadSink,
 } from "./ports.js";
 
@@ -69,7 +74,21 @@ function toTagData(tag: ForumTagSpec) {
 }
 
 function mentions(message: OutgoingMessage) {
-  return message.mentionUserIds?.length ? { parse: [], users: message.mentionUserIds } : { parse: [] };
+  return {
+    parse: message.mentionEveryone ? ["everyone" as const] : [],
+    ...(message.mentionUserIds?.length ? { users: message.mentionUserIds } : {}),
+    ...(message.mentionRoleIds?.length ? { roles: message.mentionRoleIds } : {}),
+  };
+}
+
+const EVENT_STATUS = {
+  active: GuildScheduledEventStatus.Active,
+  completed: GuildScheduledEventStatus.Completed,
+  canceled: GuildScheduledEventStatus.Canceled,
+} as const satisfies Record<Exclude<ScheduledEventStatus, "scheduled">, GuildScheduledEventStatus>;
+
+function isUnknownEvent(error: unknown): boolean {
+  return error instanceof DiscordAPIError && error.code === RESTJSONErrorCodes.UnknownGuildScheduledEvent;
 }
 
 function overwrites(specs: PermissionOverwriteSpec[]) {
@@ -435,6 +454,7 @@ export class DiscordGuildPort implements GuildPort {
       managed: role.managed,
       assignable: !role.managed && me !== null && me.roles.highest.comparePositionTo(role) > 0,
       administrator: role.permissions.has(PermissionFlagsBits.Administrator),
+      mentionable: role.mentionable,
     };
   }
 
@@ -482,5 +502,57 @@ export class DiscordGuildPort implements GuildPort {
 
   boosts(): { count: number; level: number } {
     return { count: this.guild.premiumSubscriptionCount ?? 0, level: this.guild.premiumTier };
+  }
+
+  async createScheduledEvent(spec: ScheduledEventSpec, reason: string): Promise<string> {
+    const event = await this.guild.scheduledEvents.create({
+      name: spec.name.slice(0, 100),
+      description: spec.description.slice(0, 1000),
+      scheduledStartTime: new Date(spec.startsAt),
+      scheduledEndTime: new Date(spec.endsAt),
+      privacyLevel: GuildScheduledEventPrivacyLevel.GuildOnly,
+      entityType: GuildScheduledEventEntityType.External,
+      entityMetadata: { location: spec.location.slice(0, 100) },
+      image: spec.image ? (spec.image.data ?? spec.image.path) : undefined,
+      reason,
+    });
+    return event.id;
+  }
+
+  async editScheduledEvent(
+    eventId: string,
+    change: Partial<ScheduledEventSpec> & { status?: Exclude<ScheduledEventStatus, "scheduled"> },
+    reason: string,
+  ): Promise<boolean> {
+    try {
+      await this.guild.scheduledEvents.edit(eventId, {
+        name: change.name?.slice(0, 100),
+        description: change.description?.slice(0, 1000),
+        scheduledStartTime: change.startsAt !== undefined ? new Date(change.startsAt) : undefined,
+        scheduledEndTime: change.endsAt !== undefined ? new Date(change.endsAt) : undefined,
+        entityMetadata: change.location !== undefined ? { location: change.location.slice(0, 100) } : undefined,
+        image: change.image ? (change.image.data ?? change.image.path) : undefined,
+        status: change.status ? EVENT_STATUS[change.status] : undefined,
+        reason,
+      });
+      return true;
+    } catch (error) {
+      if (isUnknownEvent(error)) {
+        return false;
+      }
+      throw error;
+    }
+  }
+
+  async deleteScheduledEvent(eventId: string): Promise<boolean> {
+    try {
+      await this.guild.scheduledEvents.delete(eventId);
+      return true;
+    } catch (error) {
+      if (isUnknownEvent(error)) {
+        return false;
+      }
+      throw error;
+    }
   }
 }

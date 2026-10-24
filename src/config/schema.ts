@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { ANNOUNCEMENT_CATEGORIES } from "../integrations/pokeverse/protocol.js";
 import { CATCH_MODES } from "../utils/stateStore.js";
 
 export const PROFILES = ["development", "production"] as const;
@@ -108,6 +109,49 @@ export const envSchema = z.object({
 
   ANNOUNCE_BROADCASTS: bool(true),
   ANNOUNCE_RESTART_WARNINGS: bool(true),
+  /** Game announcements posted to #game-announcements ("none" for none). Legendaries have #legendary-spawns. */
+  ANNOUNCE_CATEGORIES: z
+    .string()
+    .default("event,staff,milestone,news")
+    .transform((value, context) => {
+      const items = value.split(",").map((part) => part.trim().toLowerCase()).filter(Boolean);
+      if (items.length === 1 && items[0] === "none") {
+        return [];
+      }
+      const unknown = items.filter((item) => !(ANNOUNCEMENT_CATEGORIES as readonly string[]).includes(item));
+      if (unknown.length > 0) {
+        context.addIssue({ code: z.ZodIssueCode.custom, message: `unknown categories ${unknown.join(", ")} (use ${ANNOUNCEMENT_CATEGORIES.join(", ")} or none)` });
+        return z.NEVER;
+      }
+      return [...new Set(items)];
+    }),
+  /**
+   * The role each category pings on its own: "<category>=<role name or verified>" pairs. Events only ping for
+   * holidays and the weekend events, never for bonus events staff start.
+   */
+  ANNOUNCE_PINGS: z
+    .string()
+    .default("event=verified")
+    .transform((value, context) => {
+      const pings: Record<string, string> = {};
+      for (const item of value.split(",").map((part) => part.trim()).filter(Boolean)) {
+        const match = /^([a-z]+)\s*=\s*(.{1,100})$/i.exec(item);
+        const category = match?.[1]?.toLowerCase() ?? "";
+        const role = match?.[2]?.trim() ?? "";
+        if (!match || !(ANNOUNCEMENT_CATEGORIES as readonly string[]).includes(category) || /^@?(everyone|here)$/i.test(role)) {
+          context.addIssue({ code: z.ZodIssueCode.custom, message: `expected "<category>=<role name>" pairs (never everyone or here), got "${item}"` });
+          return z.NEVER;
+        }
+        pings[category] = role;
+      }
+      return pings;
+    }),
+  /** Staff broadcasts may ping the role they name (@everyone only from Gamemasters up; the game checks). */
+  ANNOUNCE_STAFF_PINGS: bool(true),
+  /** A short post an hour before a calendar event starts. */
+  ANNOUNCE_EVENT_REMINDERS: bool(true),
+  /** A Discord scheduled event for each game calendar event of the next 30 days. */
+  CALENDAR_SYNC_ENABLED: bool(true),
 
   ACTIVITY_LOG_ENABLED: bool(true),
   ACTIVITY_LOG_VIEWER_ROLE_IDS: snowflakeList,

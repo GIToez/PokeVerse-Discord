@@ -283,6 +283,9 @@ The protocol version stays `1`; everything Phase 2 added is optional. The welcom
 | Phase 2, both on | Everything. |
 | No `boosterRewards` feature | Booster rewards are not paid; `/booster` and `/pokeverse status` say the game server does not support them. |
 | No `boostPerks` feature | The bot does not send the boost level; the info post still lists the planned perks. |
+| No `announcements` feature | Staff broadcasts come from `broadcast` events as before; no category posts or pings, no role list for the Admin window. |
+| `announcements` on | `announcement` events are posted by category and `broadcast` events are ignored (the game still sends them for older bots). |
+| No `calendar` feature | No scheduled events or reminders. |
 
 A Phase 1 bot connected to a Phase 2 server ignores the new event kinds and never sends the
 new requests, so the two can be upgraded in either order.
@@ -346,9 +349,20 @@ artwork. Shiny and legendary catches are highlighted. Modes: `all`, `rare_only`,
 The game's wild legendaries (`078-wildLegendaries.lua`) send `legendary` events instead of
 `spawn` events, each with the game's `encounterId`:
 
-- `spawn`: a post in `#legendary-spawns` (species, area, tier, when it flies off, artwork)
-  and a public thread on it, named `Articuno near Seafoam Islands #31`.
-- `sighting` and `flee`: one line each in the thread.
+- `spawn`: a post in `#legendary-spawns` (species, area, tier, level, when it flies off,
+  artwork) and a public thread on it, named `Articuno near Seafoam Islands #31`. A sleeping
+  Regi says so and has no end time; a disguised Mew sends nothing until it is found.
+- `set`: one post for the whole set (the birds, the beasts, the Regis, Latias and Latios) with
+  a line per member and one thread; each member's later events edit its line and go into that
+  thread, which is archived once every member has ended.
+- `sighting` (with `trainer` when a trainer saw it; the game only sends the moves someone saw
+  or that happened near a town) and `flee`: one line each in the thread.
+- `woke` (a Regi) and `revealed` (Mew: starts its post, with the disguise): a line, and the
+  post is edited.
+- `clash` and `calm` (Groudon and Kyogre, Rayquaza calming them): a line in both encounters'
+  threads, or in the channel when neither has one.
+- `sign` (Mewtwo's psychic disturbance) and `reward` (a legendary given by a quest): a post in
+  the channel, with no thread.
 - `end` (`defeated`, `fled`, `staff`, `restart`, `vanished`) and `caught`: a line in the
   thread, and the post is edited with the outcome. The thread is archived, except after a
   defeat, which is left open for the catch (it archives itself after an hour).
@@ -364,12 +378,34 @@ The game's wild legendaries (`078-wildLegendaries.lua`) send `legendary` events 
 `Articuno, Zapdos, Moltres, Mewtwo, Mew, Raikou, Entei, Suicune, Lugia, Ho-Oh, Celebi,
 Regirock, Regice, Registeel, Latias, Latios, Kyogre, Groudon, Rayquaza, Jirachi, Deoxys`,
 the boss variants `Boss Articuno, Frozen Boss Articuno, Boss Zapdos, Boss Moltres, Final Mewtwo`,
-and all `Shiny` variants. It is `CONFIG.legendary` in `056-discordBridge.lua`.
+and all `Shiny` variants. It is `CONFIG.legendary` in `056-discordBridge.lua` plus every species
+of the wild legendaries (`WildLegendaries.SPECIES`), sent in `bridge.config`.
 
 ### Announcements and status
 
-- GM `/b` and client broadcasts, `/bc` (staff) and `/shutdown` / global save warnings
-  (including "cancelled") go to `#game-announcements`. Automatic tips are not forwarded.
+- With the `announcements` feature the game sends every server-wide announcement but the
+  tips as an `announcement` event: `category` (event, legendary, server, staff, milestone,
+  news), `title`, `text`, `full` (the message as shown in game), `source` (the script),
+  `author` (staff), `ping` and `calendar` (`key`, `id`, `state` started/ended, `type`
+  holiday/server/staff). The bot posts the categories in `ANNOUNCE_CATEGORIES` (staff posts
+  follow `ANNOUNCE_BROADCASTS`) as an embed in `#game-announcements`, with an "Event details"
+  link to the Discord event when there is one.
+- Pings: staff pick one with `/b @everyone text`, `@verified`, `@RoleName` (the tag is taken
+  out of the in-game text) or the Admin window's **Ping on Discord**. @everyone and @here are
+  for Gamemasters and up (access 3), and need the bot's Mention Everyone. Otherwise
+  `ANNOUNCE_PINGS` applies (default: calendar holiday and weekend events ping the Verified
+  Trainer role). Role names are matched ignoring case, spaces and punctuation.
+- `announcements.roles` (bot to game, on connect and every 15 minutes): the server's role
+  names (up to 50) and whether the bot may ping @everyone, for the Admin window's list.
+- Calendar: with the `calendar` feature the bot reads the next 30 days (`calendar.range`, at
+  most 60 days) every 15 minutes and keeps a Discord scheduled event per occurrence (staff
+  events forced on in game are skipped): created, edited when the game changes it, started and
+  ended on time, removed when staff remove it, and made again if someone deletes it on
+  Discord. An hour before each start it posts a reminder in `#game-announcements` (no ping).
+  Needs Create Events and Manage Events (`CALENDAR_SYNC_ENABLED`).
+- Without the `announcements` feature: GM `/b` and client broadcasts, `/bc` (staff) and
+  `/shutdown` / global save warnings (including "cancelled") go to `#game-announcements`.
+  Automatic tips are not forwarded.
 - `#server-status` has one message that the bot edits: online/offline, players, uptime,
   last restart. It is recreated if someone deletes it. Offline is shown when the bridge
   disconnects.

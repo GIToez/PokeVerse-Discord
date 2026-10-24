@@ -18,6 +18,8 @@ import type {
   PermissionName,
   PermissionOverwriteSpec,
   RoleInfo,
+  ScheduledEventSpec,
+  ScheduledEventStatus,
   ThreadSink,
 } from "../../src/bot/ports.js";
 import { loadConfig, type BotConfig } from "../../src/config/load.js";
@@ -424,7 +426,7 @@ export class FakeGuild implements GuildPort {
   }
 
   async listRoles(): Promise<RoleInfo[]> {
-    return this.roles.map(({ id, name, managed, assignable, administrator }) => ({ id, name, managed, assignable, administrator }));
+    return this.roles.map(({ id, name, managed, assignable, administrator, mentionable }) => ({ id, name, managed, assignable, administrator, mentionable }));
   }
 
   async createRole(name: string): Promise<RoleInfo> {
@@ -475,6 +477,45 @@ export class FakeGuild implements GuildPort {
 
   boosts(): { count: number; level: number } {
     return { count: this.boostCount, level: this.boostLevel };
+  }
+
+  /** Scheduled events by id. */
+  readonly scheduledEvents = new Map<string, ScheduledEventSpec & { status: ScheduledEventStatus }>();
+  readonly eventCalls: string[] = [];
+  failEvents: unknown[] = [];
+
+  private eventOp(call: string): void {
+    this.eventCalls.push(call);
+    const failure = this.failEvents.shift();
+    if (failure) {
+      throw failure;
+    }
+  }
+
+  async createScheduledEvent(spec: ScheduledEventSpec): Promise<string> {
+    this.eventOp(`create ${spec.name}`);
+    const id = `60000000000000${String(++this.counter).padStart(4, "0")}`;
+    this.scheduledEvents.set(id, { ...spec, status: "scheduled" });
+    return id;
+  }
+
+  async editScheduledEvent(
+    eventId: string,
+    change: Partial<ScheduledEventSpec> & { status?: Exclude<ScheduledEventStatus, "scheduled"> },
+  ): Promise<boolean> {
+    this.eventOp(`edit ${eventId}${change.status ? ` ${change.status}` : ""}`);
+    const event = this.scheduledEvents.get(eventId);
+    if (!event) {
+      return false;
+    }
+    const defined = Object.fromEntries(Object.entries(change).filter(([, value]) => value !== undefined));
+    Object.assign(event, defined);
+    return true;
+  }
+
+  async deleteScheduledEvent(eventId: string): Promise<boolean> {
+    this.eventOp(`delete ${eventId}`);
+    return this.scheduledEvents.delete(eventId);
   }
 }
 
