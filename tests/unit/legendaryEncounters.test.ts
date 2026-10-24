@@ -65,12 +65,14 @@ describe("wild legendary encounters", () => {
     const { legendaries, channel, queue } = setup();
     legendaries.handle(envelope(SPAWN));
     legendaries.handle(envelope({ ...SPAWN, event: "sighting", area: "Route 20" }));
+    legendaries.handle(envelope({ ...SPAWN, event: "sighting", area: "Route 21", trainer: "Misty" }));
     legendaries.handle(envelope({ ...SPAWN, event: "flee", area: "Route 19", healthPercent: 49.6 }));
     legendaries.handle(envelope({ kind: "legendary", event: "end", reason: "fled", encounterId: 31, species: "Articuno" }));
     await queue.idle();
     const thread = channel.thread0();
     expect(thread.contents()).toEqual([
       "📍 **Articuno** was spotted near **Route 20**.",
+      "📍 **Misty** spotted **Articuno** near **Route 21**.",
       "💨 **Articuno** fled near **Route 19** with 50% health!",
       "🕊️ The wild **Articuno** flew away.",
     ]);
@@ -136,4 +138,84 @@ describe("wild legendary encounters", () => {
     expect(end("vanished")).toBe("The wild **Mew** vanished.");
     expect(end("something new")).toBe("The wild **Mew** is gone.");
   });
+
+  it("posts a set once, with a line per member, and keeps every member's updates in its thread", async () => {
+    const { legendaries, channel, queue, store } = setup();
+    const set: LegendaryEvent = {
+      kind: "legendary", event: "set", species: "Legendary birds", setId: "birds", setName: "The legendary birds", level: 60,
+      members: [
+        { encounterId: 40, species: "Articuno", dexNumber: 144, area: "Seafoam Islands", endsAt: NOW + 3600 },
+        { encounterId: 41, species: "Zapdos", dexNumber: 145, area: "Power Plant", endsAt: NOW + 3600 },
+      ],
+    };
+    expect(gameEventSchema.parse(set)).toMatchObject({ event: "set" });
+    expect(legendaries.handle(envelope(set))).toEqual({ action: "post" });
+    legendaries.handle(envelope({ kind: "legendary", event: "flee", encounterId: 41, species: "Zapdos", area: "Route 10", healthPercent: 60 }));
+    await queue.idle();
+    expect(channel.sent).toHaveLength(1);
+    const embed = channel.sent[0]!.message.embeds![0]!;
+    expect(embed.title).toBe("👑 The legendary birds appeared together!");
+    expect(embed.description).toContain("level 60+");
+    expect(embed.description).toContain("• **Articuno** near **Seafoam Islands**");
+    expect(embed.description).toContain("• **Zapdos** near **Power Plant**");
+    const thread = channel.thread0();
+    expect(thread.name).toBe("The legendary birds #40");
+    expect(thread.contents()).toEqual(["💨 **Zapdos** fled near **Route 10** with 60% health!"]);
+    expect(store.get().legendaryEncounters["40"]!.set).toBe("birds:40");
+
+    legendaries.handle(envelope({ kind: "legendary", event: "caught", encounterId: 41, species: "Zapdos", trainer: "Ash" }));
+    await queue.idle();
+    expect(channel.edits.at(-1)!.message.embeds![0]!.description).toContain("• **Zapdos** near **Power Plant**: Caught: Ash");
+    expect(thread.archived).toBe(false);
+    legendaries.handle(envelope({ kind: "legendary", event: "end", reason: "fled", encounterId: 40, species: "Articuno" }));
+    await queue.idle();
+    expect(channel.edits.at(-1)!.message.embeds![0]!.title).toBe("👑 The legendary birds: the encounters are over");
+    expect(thread.archived).toBe(true);
+  });
+
+  it("marks a woken Regi of a sleeping set, and a lone sleeper's post", async () => {
+    const { legendaries, channel, queue } = setup();
+    legendaries.handle(envelope({ kind: "legendary", event: "set", species: "Regis", setId: "regis", setName: "The Regis", asleep: true,
+      members: [{ encounterId: 50, species: "Regirock", area: "Rock Tunnel" }] }));
+    legendaries.handle(envelope({ kind: "legendary", event: "woke", encounterId: 50, species: "Regirock", trainer: "Misty", area: "Rock Tunnel" }));
+    await queue.idle();
+    expect(channel.sent[0]!.message.embeds![0]!.title).toBe("💤 The Regis are sleeping");
+    expect(channel.thread0().contents()).toEqual(["⏰ **Misty** woke **Regirock** up near **Rock Tunnel**! It can be fought now."]);
+    expect(channel.edits.at(-1)!.message.embeds![0]!.description).toContain("Rock Tunnel**: Awake: Misty");
+  });
+
+  it("posts Mew showing its true self as the start of its encounter", async () => {
+    const { legendaries, channel, queue } = setup();
+    expect(legendaries.handle(envelope({ kind: "legendary", event: "revealed", encounterId: 60, species: "Mew", dexNumber: 151, trainer: "Brock", disguise: "Ditto" })).action).toBe("post");
+    legendaries.handle(envelope({ kind: "legendary", event: "flee", encounterId: 60, species: "Mew", area: "Route 1" }));
+    await queue.idle();
+    expect(channel.sent[0]!.message.embeds![0]!.title).toBe("👑 Mew shows its true self!");
+    expect(channel.thread0().contents()).toEqual([
+      "🎭 **Brock** found **Mew** hiding as a wild **Ditto**! It shows its true self.",
+      "💨 **Mew** fled near **Route 1**!",
+    ]);
+  });
+
+  it("puts a clash in both legendaries' threads, and posts signs and rewards on their own", async () => {
+    const { legendaries, channel, queue } = setup();
+    legendaries.handle(envelope({ ...SPAWN, encounterId: 70, species: "Groudon", area: "Route 3" }));
+    legendaries.handle(envelope({ ...SPAWN, encounterId: 71, species: "Kyogre", area: "Route 4" }));
+    legendaries.handle(envelope({ kind: "legendary", event: "clash", encounterId: 70, otherEncounterId: 71, species: "Groudon", other: "Kyogre",
+      text: "Groudon and Kyogre meet near Route 3: a storm breaks out!" }));
+    legendaries.handle(envelope({ kind: "legendary", event: "sign", species: "Mewtwo", area: "Cerulean Cave", endsAt: NOW + 600,
+      text: "A strange psychic disturbance is building near Cerulean Cave... something powerful is coming." }));
+    legendaries.handle(envelope({ kind: "legendary", event: "reward", species: "Celebi", dexNumber: 251, trainer: "Gary" }));
+    await queue.idle();
+    const threads = [...channel.threads.values()];
+    expect(threads.map((thread) => thread.contents())).toEqual([
+      ["🌩️ Groudon and Kyogre meet near Route 3: a storm breaks out!"],
+      ["🌩️ Groudon and Kyogre meet near Route 3: a storm breaks out!"],
+    ]);
+    const titles = channel.sent.map((item) => item.message.embeds?.[0]?.title);
+    expect(titles).toContain("🔮 Something powerful is coming near Cerulean Cave");
+    expect(titles).toContain("🎁 Gary received Celebi!");
+    expect(legendaries.handle(envelope({ kind: "legendary", event: "clash", encounterId: 1, otherEncounterId: 2, species: "Groudon" })))
+      .toEqual({ action: "skip", reason: "unknown_encounter" });
+  });
 });
+
