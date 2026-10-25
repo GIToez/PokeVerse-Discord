@@ -189,6 +189,8 @@ export interface GuildPort {
   setChannelTopic(channelId: string, topic: string, reason: string): Promise<void>;
   /** Adds allows to the bot's own member overwrite on a channel; other overwrites are left alone. */
   allowBotInChannel(channelId: string, permissions: PermissionName[], reason: string): Promise<void>;
+  /** Adds allows to a role's overwrite on a channel; other overwrites are left alone. */
+  allowRoleInChannel(channelId: string, roleId: string, permissions: PermissionName[], reason: string): Promise<void>;
   channelAccess(channelId: string): ChannelAccess | undefined;
   listRoles(): Promise<RoleInfo[]>;
   createRole(name: string, reason: string): Promise<RoleInfo>;

@@ -166,6 +166,8 @@ that only someone logged in to the game account can see.
 | `PREMIUM_ROLE_ENABLED` / `PREMIUM_ROLE_NAME` | `true` / `Ace Trainer` | Premium role. |
 | `STAFF_ROLES_ENABLED` | `true` | Staff roles from the in-game group. |
 | `STAFF_ROLE_NAMES` | `2=Tutor,3=Senior Tutor,4=Gamemaster,5=Community Manager,6=God` | `group id=role name` pairs; leave a group out to give it no role. |
+| `STAFF_ROOMS_ENABLED` | `true` | `#tutor-room` (groups 2 and up) and `#gm-room` (4 and up) in the private PokeVerse Staff category. |
+| `STAFF_CHAT_ENABLED` | `true` | Relays `#tutor-room` with the in-game Counselor channel and `#gm-room` with Staff (game feature `staffChat`). |
 | `NICKNAME_SYNC` | `true` | Set the server nickname to the main character. |
 | `LINK_RESYNC_MINUTES` | `15` | Periodic re-check of all links; `0` turns it off. |
 | `DISCORD_MEMBERS_INTENT` | `false` | Restore roles immediately on rejoin (needs the Server Members intent in the Developer Portal). |

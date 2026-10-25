@@ -130,7 +130,7 @@ export class BotApp {
       return;
     }
 
-    client.on(Events.MessageCreate, createMessageHandler(this.integration.chat, logger.child({ component: "chat" })));
+    client.on(Events.MessageCreate, createMessageHandler([this.integration.chat, this.integration.staffChat], logger.child({ component: "chat" })));
     const boosters = this.integration.boosters;
     if (boosters) {
       // "X just boosted the server" system messages: how the bot finds boosters who are not linked.

@@ -26,6 +26,7 @@ import {
   type BoosterWeekResult,
   type BridgeConfigResult,
   type CalendarRangeResult,
+  type StaffRoom,
   type LinkAccountResult,
   type LinkCharactersResult,
   type LinkListResult,
@@ -62,6 +63,13 @@ export interface LinkApi {
   setMain(discordUserId: string, character: string): Promise<LinkSummary>;
   unlink(discordUserId: string): Promise<{ unlinked: boolean }>;
   list(offset: number, limit: number): Promise<LinkListResult>;
+}
+
+/** The in-game staff channels (feature `staffChat`). */
+export interface StaffChatApi {
+  readonly connected: boolean;
+  hasFeature(feature: string): boolean;
+  send(room: StaffRoom, author: string, text: string): Promise<{ delivered: number; text: string }>;
 }
 
 export interface AdminApi {
@@ -138,6 +146,16 @@ export function createAdminApi(client: BridgeClient): AdminApi {
       return client.connected;
     },
     sessions: () => client.request("admin.sessions", {}, adminSessionsResultSchema),
+  };
+}
+
+export function createStaffChatApi(client: BridgeClient): StaffChatApi {
+  return {
+    get connected() {
+      return client.connected;
+    },
+    hasFeature: (feature) => client.hasFeature(feature),
+    send: (room, author, text) => client.request("chat.staff", { room, author, text }, chatSendResultSchema),
   };
 }
 

@@ -177,6 +177,10 @@ export const envSchema = z.object({
   PREMIUM_ROLE_NAME: z.string().trim().min(1).max(100).default("Ace Trainer"),
   NICKNAME_SYNC: bool(true),
   STAFF_ROLES_ENABLED: bool(true),
+  /** Private staff rooms (#tutor-room, #gm-room) that the staff roles open. Needs staff roles. */
+  STAFF_ROOMS_ENABLED: bool(true),
+  /** Relays the staff rooms with the in-game Counselor and Staff channels (game feature staffChat). */
+  STAFF_CHAT_ENABLED: bool(true),
   STAFF_ROLE_NAMES: z
     .string()
     .default("2=Tutor,3=Senior Tutor,4=Gamemaster,5=Community Manager,6=God")

@@ -1,10 +1,11 @@
 import type { GuildChannelInfo, GuildPort, PermissionName, PermissionOverwriteSpec, RoleInfo } from "../bot/ports.js";
-import { checkPrivacy, type PrivacyPolicy } from "../services/activity/privacy.js";
+import { checkPrivacy, type PrivacyCheck, type PrivacyPolicy } from "../services/activity/privacy.js";
 import type { Logger } from "../utils/logger.js";
 import type { ChannelPurpose, StateStore } from "../utils/stateStore.js";
 import {
   ADMIN_CATEGORY_NAME,
   CATEGORY_NAME,
+  STAFF_CATEGORY_NAME,
   CHANNEL_DEFINITIONS,
   definitionFor,
   LINKING_GUILD_PERMISSIONS,
@@ -30,6 +31,10 @@ export interface ChannelReport {
   privacyProblems?: string[];
   /** Admin channels only: roles with Administrator, which always see every channel. */
   administratorRoles?: string[];
+  /** Staff rooms only: the roles that should get in. */
+  staffRoles?: string[];
+  /** Staff rooms only: staff roles that can't get in yet. */
+  accessProblems?: string[];
 }
 
 /** `staff:<id>`: the role for in-game group `<id>` (Tutor, Gamemaster, ...). */
@@ -51,6 +56,8 @@ export interface SetupReport {
   categoryAction: ChannelAction;
   adminCategoryId?: string | undefined;
   adminCategoryAction?: ChannelAction;
+  staffCategoryId?: string | undefined;
+  staffCategoryAction?: ChannelAction;
   missingGuildPermissions: PermissionName[];
   channels: ChannelReport[];
   roles: RoleReport[];
@@ -69,6 +76,8 @@ export interface SetupOptions {
   /** Staff pings (Mention Everyone) and the calendar sync (Create and Manage Events). */
   pings?: boolean;
   calendar?: boolean;
+  /** #tutor-room and #gm-room, opened by the `staff:<group>` linking roles. */
+  staffRooms?: boolean;
 }
 
 const DEFAULT_OPTIONS: SetupOptions = {
@@ -84,6 +93,11 @@ const BOT_POST: PermissionName[] = ["ViewChannel", "SendMessages", "EmbedLinks",
 const VIEWER: PermissionName[] = ["ViewChannel", "ReadMessageHistory"];
 /** Staff in a private forum answer in the posts and change their status tags. */
 const FORUM_VIEWER: PermissionName[] = [...VIEWER, "SendMessagesInThreads", "ManageThreads"];
+/** Staff talk in their rooms. */
+const STAFF_MEMBER: PermissionName[] = [
+  "ViewChannel", "SendMessages", "ReadMessageHistory", "EmbedLinks", "AttachFiles", "AddReactions",
+  "CreatePublicThreads", "SendMessagesInThreads",
+];
 
 function normalizeName(name: string): string {
   return name.trim().toLowerCase();
@@ -121,9 +135,16 @@ export class ChannelSetup {
     };
   }
 
+  /** Whether only the staff room's roles (and the bot admins) can see the channel. */
+  staffRoomPrivacy(guild: GuildPort, purpose: ChannelPurpose, channelId: string): PrivacyCheck {
+    return checkPrivacy(guild.channelAccess(channelId), this.staffPolicy(guild, definitionFor(purpose)));
+  }
+
   private definitions(): readonly ChannelDefinition[] {
     const { activity, reports } = this.options;
-    const enabled = { activity: activity.enabled, bugReports: reports.bugs, playerReports: reports.players, boosterRewards: this.options.boosters ?? false };
+    const staffRooms = (this.options.staffRooms ?? false) && this.options.linking.enabled &&
+      this.options.linking.roles.some((role) => role.key.startsWith("staff:"));
+    const enabled = { activity: activity.enabled, bugReports: reports.bugs, playerReports: reports.players, boosterRewards: this.options.boosters ?? false, staffRooms };
     return CHANNEL_DEFINITIONS.filter((definition) => !definition.feature || enabled[definition.feature]);
   }
 
@@ -148,12 +169,15 @@ export class ChannelSetup {
     });
     const category = state.categoryId ? byId.get(state.categoryId) : undefined;
     const adminCategory = state.adminCategoryId ? byId.get(state.adminCategoryId) : undefined;
+    const staffCategory = state.staffCategoryId ? byId.get(state.staffCategoryId) : undefined;
     const roles = this.options.linking.enabled ? await this.inspectRoles(guild) : [];
     return this.finish(guild, {
       categoryId: category?.id,
       categoryAction: category ? "kept" : "skipped",
       adminCategoryId: adminCategory?.id,
       adminCategoryAction: adminCategory ? "kept" : "skipped",
+      staffCategoryId: staffCategory?.id,
+      staffCategoryAction: staffCategory ? "kept" : "skipped",
       channels: reports,
       roles,
     });
@@ -207,24 +231,31 @@ export class ChannelSetup {
     const admin = this.definitions().some((definition) => definition.group === "admin")
       ? await this.ensureCategory(guild, channels, byId, "adminCategoryId", ADMIN_CATEGORY_NAME, this.privateOverwrites(guild), canCreate)
       : { category: undefined, action: "skipped" as ChannelAction };
+    // The staff rooms' overwrites name the staff roles, so the roles come first.
+    const roles = this.options.linking.enabled ? await this.ensureRoles(guild) : [];
+    const staff = this.definitions().some((definition) => definition.group === "staff")
+      ? await this.ensureCategory(guild, channels, byId, "staffCategoryId", STAFF_CATEGORY_NAME, this.closedOverwrites(guild), canCreate)
+      : { category: undefined, action: "skipped" as ChannelAction };
 
     const reports: ChannelReport[] = [];
     for (const definition of this.definitions()) {
-      const category = definition.group === "admin" ? admin.category : main.category;
+      const category = definition.group === "admin" ? admin.category : definition.group === "staff" ? staff.category : main.category;
       reports.push(await this.ensureChannel(guild, definition, channels, byId, category, canCreate));
     }
-    const roles = this.options.linking.enabled ? await this.ensureRoles(guild) : [];
     const report = this.finish(guild, {
       categoryId: main.category?.id,
       categoryAction: main.action,
       adminCategoryId: admin.category?.id,
       adminCategoryAction: admin.action,
+      staffCategoryId: staff.category?.id,
+      staffCategoryAction: staff.action,
       channels: reports,
       roles,
     });
     this.logger.info("Channel setup finished", {
       category: main.action,
       adminCategory: admin.action,
+      staffCategory: staff.action,
       created: reports.filter((item) => item.action === "created").map((item) => item.name),
       adopted: reports.filter((item) => item.action === "adopted").map((item) => item.name),
       failed: reports.filter((item) => item.action === "failed").map((item) => item.name),
@@ -247,9 +278,47 @@ export class ChannelSetup {
     ];
   }
 
+  /** @everyone denied, the bot allowed: the staff category, opened channel by channel. */
+  private closedOverwrites(guild: GuildPort): PermissionOverwriteSpec[] {
+    return [
+      { id: guild.everyoneRoleId, type: "role", allow: [], deny: ["ViewChannel"] },
+      { id: guild.botUserId, type: "member", allow: BOT_POST, deny: [] },
+    ];
+  }
+
+  /** The `staff:<group>` roles from the room's lowest group up, with their saved role ids. */
+  private staffRolesFor(definition: ChannelDefinition): Array<{ name: string; roleId: string | undefined }> {
+    const saved = this.store.get().roles;
+    return this.options.linking.roles
+      .filter(({ key }) => key.startsWith("staff:") && Number(key.slice("staff:".length)) >= (definition.minGroup ?? Infinity))
+      .map(({ key, name }) => ({ name, roleId: saved[key] }));
+  }
+
+  /** Who may see a staff room: its staff roles and the bot admins. */
+  private staffPolicy(guild: GuildPort, definition: ChannelDefinition): PrivacyPolicy {
+    const roleIds = this.staffRolesFor(definition).flatMap(({ roleId }) => (roleId ? [roleId] : []));
+    return {
+      roleIds: [...new Set([...roleIds, ...this.options.adminRoleIds])],
+      userIds: this.options.adminUserIds,
+      botUserId: guild.botUserId,
+    };
+  }
+
+  private staffOverwrites(guild: GuildPort, definition: ChannelDefinition): PermissionOverwriteSpec[] {
+    const policy = this.staffPolicy(guild, definition);
+    return [
+      ...this.closedOverwrites(guild),
+      ...policy.roleIds.map((id): PermissionOverwriteSpec => ({ id, type: "role", allow: STAFF_MEMBER, deny: [] })),
+      ...policy.userIds.map((id): PermissionOverwriteSpec => ({ id, type: "member", allow: STAFF_MEMBER, deny: [] })),
+    ];
+  }
+
   private overwritesFor(definition: ChannelDefinition, guild: GuildPort): PermissionOverwriteSpec[] {
     if (definition.group === "admin") {
       return this.privateOverwrites(guild, definition);
+    }
+    if (definition.group === "staff") {
+      return this.staffOverwrites(guild, definition);
     }
     const overwrites: PermissionOverwriteSpec[] = [
       { id: guild.botUserId, type: "member", allow: definition.required, deny: [] },
@@ -269,7 +338,7 @@ export class ChannelSetup {
     guild: GuildPort,
     channels: GuildChannelInfo[],
     byId: Map<string, GuildChannelInfo>,
-    key: "categoryId" | "adminCategoryId",
+    key: "categoryId" | "adminCategoryId" | "staffCategoryId",
     name: string,
     overwrites: PermissionOverwriteSpec[],
     canCreate: boolean,
@@ -397,6 +466,16 @@ export class ChannelSetup {
         await guild.allowBotInChannel(channel.id, restorable, REASON);
         updated.push(`bot permissions (${restorable.join(", ")})`);
       }
+      if (definition.group === "staff" && serverWide.includes("ManageRoles")) {
+        const opened: string[] = [];
+        for (const { name, roleId } of this.staffLockedOut(guild, definition, channel.id)) {
+          await guild.allowRoleInChannel(channel.id, roleId, STAFF_MEMBER, REASON);
+          opened.push(name);
+        }
+        if (opened.length > 0) {
+          updated.push(`opened to ${opened.join(", ")}`);
+        }
+      }
     } catch (caught) {
       this.logger.error("Could not update channel", { channel: definition.name, error: caught });
       error = `Could not update: ${(caught as Error).message}`;
@@ -429,7 +508,30 @@ export class ChannelSetup {
       report.privacyProblems = privacy.problems;
       report.administratorRoles = privacy.administratorRoles;
     }
+    if (definition.group === "staff") {
+      const roles = this.staffRolesFor(definition);
+      report.staffRoles = roles.map(({ name }) => name);
+      if (channel) {
+        const privacy = checkPrivacy(guild.channelAccess(channel.id), this.staffPolicy(guild, definition));
+        report.privacyProblems = privacy.problems;
+        report.administratorRoles = privacy.administratorRoles;
+        report.accessProblems = [
+          ...roles.filter(({ roleId }) => !roleId).map(({ name }) => `role "${name}" doesn't exist yet`),
+          ...this.staffLockedOut(guild, definition, channel.id).map(({ name }) => `role "${name}" can't see it`),
+        ];
+      }
+    }
     return report;
+  }
+
+  /** Staff roles of the room that exist but can't see it. */
+  private staffLockedOut(guild: GuildPort, definition: ChannelDefinition, channelId: string): Array<{ name: string; roleId: string }> {
+    const access = guild.channelAccess(channelId);
+    if (!access) {
+      return [];
+    }
+    return this.staffRolesFor(definition).flatMap(({ name, roleId }) =>
+      roleId && !access.roles.some((role) => role.id === roleId) ? [{ name, roleId }] : []);
   }
 
   private async inspectRoles(guild: GuildPort): Promise<RoleReport[]> {
@@ -535,7 +637,8 @@ export class ChannelSetup {
     const ok =
       parts.channels.length === this.definitions().length &&
       parts.channels.every(
-        (channel) => channel.channelId !== undefined && channel.missingPermissions.length === 0 && !channel.privacyProblems?.length,
+        (channel) => channel.channelId !== undefined && channel.missingPermissions.length === 0 &&
+          !channel.privacyProblems?.length && !channel.accessProblems?.length,
       ) &&
       parts.roles.every((role) => role.roleId !== undefined && role.assignable) &&
       missingGuildPermissions.length === 0;
@@ -557,6 +660,9 @@ export function formatSetupReport(report: SetupReport): string {
   if (report.adminCategoryAction && report.adminCategoryAction !== "skipped") {
     lines.push(`Private category "${ADMIN_CATEGORY_NAME}": ${report.adminCategoryAction}`);
   }
+  if (report.staffCategoryAction && report.staffCategoryAction !== "skipped") {
+    lines.push(`Private category "${STAFF_CATEGORY_NAME}": ${report.staffCategoryAction}`);
+  }
   for (const channel of report.channels) {
     const where = channel.channelId ? `<#${channel.channelId}>` : `#${channel.name}`;
     let line = `- ${where}: ${channel.action}`;
@@ -569,7 +675,17 @@ export function formatSetupReport(report: SetupReport): string {
     if (channel.error) {
       line += ` (${channel.error})`;
     }
-    if (channel.privacyProblems?.length) {
+    if (channel.staffRoles) {
+      if (channel.privacyProblems?.length) {
+        line += ` NOT PRIVATE: ${channel.privacyProblems.join("; ")}`;
+      }
+      if (channel.accessProblems?.length) {
+        line += ` (${channel.accessProblems.join("; ")})`;
+      }
+      if (channel.channelId && !channel.privacyProblems?.length && !channel.accessProblems?.length) {
+        line += ` (private: ${channel.staffRoles.join(", ")})`;
+      }
+    } else if (channel.privacyProblems?.length) {
       line += ` NOT PRIVATE, nothing is posted until fixed: ${channel.privacyProblems.join("; ")}`;
     } else if (channel.privacyProblems) {
       line += " (private)";

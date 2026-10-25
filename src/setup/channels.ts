@@ -5,6 +5,8 @@ import type { ChannelPurpose } from "../utils/stateStore.js";
 export const CATEGORY_NAME = "PokeVerse Integration";
 /** Private category for staff-only channels. */
 export const ADMIN_CATEGORY_NAME = "Admin Logs";
+/** Private category for the staff rooms, opened by the staff roles. */
+export const STAFF_CATEGORY_NAME = "PokeVerse Staff";
 
 export interface ChannelDefinition {
   purpose: ChannelPurpose;
@@ -18,13 +20,18 @@ export interface ChannelDefinition {
   required: PermissionName[];
   /** Earlier default topics; setup replaces them with `topic`, but never a topic someone wrote. */
   previousTopics?: string[];
-  /** "admin" channels live in the private Admin Logs category and are verified before every post. */
-  group: "main" | "admin";
+  /**
+   * "admin" channels live in the private Admin Logs category and are verified before every post.
+   * "staff" rooms live in the private PokeVerse Staff category; the staff roles from `minGroup` up can see them.
+   */
+  group: "main" | "admin" | "staff";
+  /** Staff rooms: the lowest in-game staff group (groups.xml) whose role gets in. */
+  minGroup?: number;
   /** Defaults to a text channel. Forum channels get `tags`, added again by setup when missing. */
   type?: "text" | "forum";
   tags?: ForumTagSpec[];
   /** The config switch the channel belongs to; without one it is always set up. */
-  feature?: "activity" | "bugReports" | "playerReports" | "boosterRewards";
+  feature?: "activity" | "bugReports" | "playerReports" | "boosterRewards" | "staffRooms";
 }
 
 const POST: PermissionName[] = ["ViewChannel", "SendMessages", "EmbedLinks", "ReadMessageHistory"];
@@ -130,6 +137,26 @@ export const CHANNEL_DEFINITIONS: readonly ChannelDefinition[] = [
     type: "forum",
     tags: forumTagsFor("player"),
     feature: "playerReports",
+  },
+  {
+    purpose: "staffTutors",
+    name: "tutor-room",
+    topic: "Staff room for Tutors, Senior Tutors, Gamemasters and up. Access follows the in-game staff group of your linked account.",
+    readOnly: false,
+    required: ["ViewChannel"],
+    group: "staff",
+    minGroup: 2,
+    feature: "staffRooms",
+  },
+  {
+    purpose: "staffGamemasters",
+    name: "gm-room",
+    topic: "Staff room for Gamemasters, Community Managers and Gods. Access follows the in-game staff group of your linked account.",
+    readOnly: false,
+    required: ["ViewChannel"],
+    group: "staff",
+    minGroup: 4,
+    feature: "staffRooms",
   },
 ];
 

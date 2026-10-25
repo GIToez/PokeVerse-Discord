@@ -8,6 +8,7 @@ import {
   createGameApi,
   createLinkApi,
   createReportApi,
+  createStaffChatApi,
   type GameApi,
   type LinkApi,
 } from "../integrations/pokeverse/gameApi.js";
@@ -22,6 +23,7 @@ import { BoosterRewards } from "../services/boosters/boosterRewards.js";
 import { CalendarSync } from "../services/calendar/calendarSync.js";
 import { CatchAnnouncer } from "../services/catches/catchAnnouncer.js";
 import { ChatRelay } from "../services/chat/chatRelay.js";
+import { StaffChatRelay } from "../services/chat/staffChatRelay.js";
 import { ArtworkResolver } from "../services/pokemon/artwork.js";
 import { PokemonAutocomplete } from "../services/pokemon/pokemonLookup.js";
 import { LegendaryEncounters } from "../services/legendaries/legendaryEncounters.js";
@@ -57,6 +59,7 @@ export class GameIntegration {
   readonly bridge: BridgeClient;
   readonly game: GameApi;
   readonly chat: ChatRelay;
+  readonly staffChat: StaffChatRelay;
   readonly catches: CatchAnnouncer;
   readonly spawns: SpawnAnnouncer;
   readonly legendaries: LegendaryEncounters;
@@ -198,6 +201,22 @@ export class GameIntegration {
       boosters: config.boosters.enabled,
       pings: config.announcements.staffPings,
       calendar: config.announcements.calendar,
+      staffRooms: config.linking.staffRooms,
+    });
+    this.staffChat = new StaffChatRelay({
+      enabled: config.linking.staffChat,
+      config: config.chat,
+      guildId: config.discord.guildId,
+      api: createStaffChatApi(this.bridge),
+      channels,
+      privacy: (purpose, channelId) => {
+        const guild = options.guild();
+        return guild ? this.setup.staffRoomPrivacy(guild, purpose, channelId) : undefined;
+      },
+      queue: this.queues.chat!,
+      logger: logger.child({ component: "staff-chat" }),
+      metrics,
+      now: options.now,
     });
     this.reports = new ReportForums({
       config: config.reports,
@@ -348,6 +367,9 @@ export class GameIntegration {
       switch (event.kind) {
         case "chat":
           this.chat.handleGameChat({ ...envelope, event });
+          break;
+        case "staff_chat":
+          this.staffChat.handleGameChat({ ...envelope, event });
           break;
         case "catch":
           this.catches.handle({ ...envelope, event });

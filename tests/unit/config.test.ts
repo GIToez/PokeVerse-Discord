@@ -149,6 +149,8 @@ describe("activity log and linking configuration", () => {
         { groupId: 5, name: "Community Manager" },
         { groupId: 6, name: "God" },
       ],
+      staffRooms: true,
+      staffChat: true,
       nicknameSync: true,
       resyncMinutes: 15,
       membersIntent: false,
@@ -191,6 +193,11 @@ describe("activity log and linking configuration", () => {
     expect(config.linking.staffRoles).toEqual([{ groupId: 2, name: "Helper" }, { groupId: 4, name: "Game Master" }]);
     expect(describeConfig(config)).toMatchObject({ linking: { roles: ["Verified Trainer", "Ace Trainer", "Helper (game group 2)", "Game Master (game group 4)"] } });
     expect(makeConfig({ STAFF_ROLES_ENABLED: "false" }).linking.staffRoles).toEqual([]);
+    expect(makeConfig({ STAFF_ROLES_ENABLED: "false" }).linking.staffRooms).toBe(false);
+    expect(makeConfig({ STAFF_ROOMS_ENABLED: "false" }).linking.staffRooms).toBe(false);
+    expect(makeConfig({ STAFF_ROOMS_ENABLED: "false" }).linking.staffChat).toBe(false);
+    expect(makeConfig({ STAFF_CHAT_ENABLED: "false" }).linking).toMatchObject({ staffRooms: true, staffChat: false });
+    expect(makeConfig({ LINKING_ENABLED: "false" }).linking.staffRooms).toBe(false);
     for (const value of ["1=Player", "2=Tutor,2=Other", "2=Tutor,3=Tutor", "Tutor", "2="]) {
       expect(problemsOf(() => makeConfig({ STAFF_ROLE_NAMES: value }))[0]).toMatch(/STAFF_ROLE_NAMES/);
     }

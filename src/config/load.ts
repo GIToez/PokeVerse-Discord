@@ -89,6 +89,10 @@ export interface BotConfig {
     premiumRoleName: string;
     /** In-game staff group id -> Discord role name; empty when staff roles are off. */
     staffRoles: Array<{ groupId: number; name: string }>;
+    /** #tutor-room and #gm-room, opened by the staff roles. Off without staff roles. */
+    staffRooms: boolean;
+    /** #tutor-room <-> Counselor and #gm-room <-> Staff in game. Off without staff rooms. */
+    staffChat: boolean;
     nicknameSync: boolean;
     resyncMinutes: number;
     membersIntent: boolean;
@@ -288,6 +292,8 @@ export function loadConfig(options: LoadOptions): BotConfig {
       premiumRoleEnabled: raw.PREMIUM_ROLE_ENABLED,
       premiumRoleName: raw.PREMIUM_ROLE_NAME,
       staffRoles: raw.STAFF_ROLES_ENABLED ? raw.STAFF_ROLE_NAMES : [],
+      staffRooms: raw.LINKING_ENABLED && raw.STAFF_ROLES_ENABLED && raw.STAFF_ROOMS_ENABLED && raw.STAFF_ROLE_NAMES.length > 0,
+      staffChat: raw.LINKING_ENABLED && raw.STAFF_ROLES_ENABLED && raw.STAFF_ROOMS_ENABLED && raw.STAFF_ROLE_NAMES.length > 0 && raw.STAFF_CHAT_ENABLED,
       nicknameSync: raw.NICKNAME_SYNC,
       resyncMinutes: raw.LINK_RESYNC_MINUTES,
       membersIntent: raw.DISCORD_MEMBERS_INTENT,

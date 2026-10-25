@@ -123,6 +123,7 @@ New settings, all optional, with these defaults when they are not in `.env.produ
 | `VERIFIED_ROLE_NAME` | `Verified Trainer` | Role for linked members |
 | `PREMIUM_ROLE_ENABLED` / `PREMIUM_ROLE_NAME` | `true` / `Ace Trainer` | Role while the account has premium time |
 | `STAFF_ROLES_ENABLED` / `STAFF_ROLE_NAMES` | `true` / `2=Tutor,3=Senior Tutor,4=Gamemaster,5=Community Manager,6=God` | Role of the highest in-game staff group among the account's characters |
+| `STAFF_ROOMS_ENABLED` / `STAFF_CHAT_ENABLED` | `true` / `true` | `#tutor-room` and `#gm-room`, relayed with the in-game Counselor and Staff channels |
 | `NICKNAME_SYNC` | `true` | Server nickname = main character |
 | `LINK_RESYNC_MINUTES` | `15` | Periodic check of all links (premium expiry, in-game unlinks) |
 | `BUG_REPORTS_ENABLED` | `true` | `#bug-reports` forum, one post per in-game bug report |

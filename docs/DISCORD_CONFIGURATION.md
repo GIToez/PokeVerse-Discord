@@ -47,7 +47,7 @@ The link uses the scopes `bot applications.commands` and exactly these permissio
 | Embed Links | Rich embeds |
 | Attach Files | Pokemon artwork from the game client |
 | Read Message History | Find and edit the status message |
-| Manage Channels | Create the "PokeVerse Integration" and private "Admin Logs" categories and their channels |
+| Manage Channels | Create the "PokeVerse Integration" and private "Admin Logs" and "PokeVerse Staff" categories and their channels |
 | Manage Roles | Create the Verified Trainer, Ace Trainer and staff roles and give/remove them on link changes |
 | Manage Nicknames | Set a linked member's server nickname to their main character |
 | Create Public Threads | One thread per wild legendary in `#legendary-spawns` |
@@ -123,7 +123,27 @@ PokeVerse Integration
 Admin Logs                                               private (activity log or player reports)
   #player-activity      staff-only login/logout/link log read-only, authorized viewers only
   #player-reports       forum: one post per player report authorized viewers only
+PokeVerse Staff                                          private (staff roles)
+  #tutor-room           in-game Counselor channel        Tutor, Senior Tutor, Gamemaster, Community Manager, God
+  #gm-room              in-game Staff channel            Gamemaster, Community Manager, God
 ```
+
+The staff rooms (`STAFF_ROOMS_ENABLED`, on with account linking and staff roles) are created
+with `@everyone` denied View Channel, the bot allowed, and the staff roles from the room's
+lowest group up allowed to read and write; `DISCORD_ADMIN_ROLE_IDS` / `DISCORD_ADMIN_USER_IDS`
+get in too. Access follows the staff role, which follows the member's in-game group, so a
+member only gets in after linking their account. A Gamemaster has only the Gamemaster role,
+which is why `#tutor-room` lists every group from Tutor up. Setup reports a room as NOT
+PRIVATE if any other role can see it (for example a Tutor in `#gm-room`), and it adds access
+for a staff role that can't see its room (the one permission change setup makes on an
+existing channel); it never removes access.
+
+Each room is relayed both ways with its in-game channel (`STAFF_CHAT_ENABLED`, needs the
+game's `staffChat` feature): `#tutor-room` with **Counselor** (Tutor and up in game) and
+`#gm-room` with **Staff** (Gamemaster and up). Lines from the game show as
+`[Game] Name: text`; messages from Discord show in game as `[Discord] Name`. While a room is
+not private nothing is relayed either way, so staff talk never leaks and nobody else can write
+into a staff channel.
 
 `Admin Logs` and `#player-activity` are created with `@everyone` denied View Channel, the bot
 allowed, and `ACTIVITY_LOG_VIEWER_ROLE_IDS` / `ACTIVITY_LOG_VIEWER_USER_IDS` allowed to view
@@ -141,7 +161,8 @@ the bot refuses to adopt or hand out a role with Administrator. You can rename, 
 
 Rules:
 
-- **Nothing is ever deleted**, renamed, moved or re-permissioned by the bot. Admin changes
+- **Nothing is ever deleted**, renamed, moved or re-permissioned by the bot (except that a
+  staff room gets access added for a staff role that can't see it). Admin changes
   (names, topics, positions, permissions) are kept.
 - Channel IDs are stored in `data/state.<profile>.json` immediately after each step, so a
   renamed channel stays assigned.

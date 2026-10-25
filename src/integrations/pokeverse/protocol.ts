@@ -27,6 +27,8 @@ export const FEATURES = {
   announcements: "announcements",
   /** `calendar.range` lists the game's calendar events. */
   calendar: "calendar",
+  /** The Counselor and Staff channels: `staff_chat` events and `chat.staff`. */
+  staffChat: "staffChat",
 } as const;
 export const errorSchema = z.object({ type: z.literal("error"), code: z.string() });
 
@@ -39,6 +41,21 @@ const position = z.object({ x: z.number(), y: z.number(), z: z.number() });
 export const chatEventSchema = z.object({
   kind: z.literal("chat"),
   channelId: z.number(),
+  author: z.string(),
+  level: z.number().optional(),
+  text: z.string(),
+});
+
+/** The in-game staff channels: "tutors" is Counselor (Tutor and up), "gamemasters" is Staff (Gamemaster and up). */
+export const STAFF_ROOMS = ["tutors", "gamemasters"] as const;
+export type StaffRoom = (typeof STAFF_ROOMS)[number];
+
+/** A line in an in-game staff channel. Its own kind, so a bot that doesn't know it never posts it in #game-chat. */
+export const staffChatEventSchema = z.object({
+  kind: z.literal("staff_chat"),
+  scope: z.literal("admin"),
+  room: z.enum(STAFF_ROOMS),
+  channelId: z.number().optional(),
   author: z.string(),
   level: z.number().optional(),
   text: z.string(),
@@ -318,6 +335,7 @@ export const reportEventSchema = z.object({
 
 export const gameEventSchema = z.discriminatedUnion("kind", [
   chatEventSchema,
+  staffChatEventSchema,
   catchEventSchema,
   spawnEventSchema,
   legendaryEventSchema,
@@ -348,6 +366,7 @@ export const responseSchema = z.object({
 });
 
 export type ChatEvent = z.infer<typeof chatEventSchema>;
+export type StaffChatEvent = z.infer<typeof staffChatEventSchema>;
 export type CatchEvent = z.infer<typeof catchEventSchema>;
 export type SpawnEvent = z.infer<typeof spawnEventSchema>;
 export type LegendaryEvent = z.infer<typeof legendaryEventSchema>;

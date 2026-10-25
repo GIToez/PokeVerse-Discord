@@ -383,6 +383,18 @@ export class FakeGuild implements GuildPort {
     this.channelUpdates.push(`allow ${channelId} ${permissions.join(",")}`);
   }
 
+  async allowRoleInChannel(channelId: string, roleId: string, permissions: PermissionName[]): Promise<void> {
+    const channel = this.channels.find((item) => item.id === channelId)!;
+    let own = channel.overwrites.find((item) => item.id === roleId);
+    if (!own) {
+      own = { id: roleId, type: "role", allow: [], deny: [] };
+      channel.overwrites.push(own);
+    }
+    own.allow = [...new Set([...own.allow, ...permissions])];
+    own.deny = own.deny.filter((name) => !permissions.includes(name));
+    this.channelUpdates.push(`allow role ${roleId} ${channelId} ${permissions.join(",")}`);
+  }
+
   /** Roles of the guild (without @everyone). */
   readonly roles: FakeRole[] = [];
   readonly members = new Map<string, FakeMember>();

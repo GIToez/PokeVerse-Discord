@@ -203,7 +203,8 @@ Those four commits are now on game `main`. The current series is one commit on `
 - Shared-secret authentication: the server sends a random nonce; the bot answers with
   `HMAC-SHA256(secret, nonce)`. Secrets under 16 characters keep the bridge disabled.
 - The secret lives only in the ignored `config.local.lua` and the bot's `.env` file.
-- Write operations: `chat.send` (displays a message in channel 7) and the `link.*`
+- Write operations: `chat.send` (displays a message in channel 7), `chat.staff` (displays a
+  message in the Counselor or Staff channel, chosen by room name, never by id) and the `link.*`
   requests, which only change `discord_account_links`. Lookups are read-only and run
   inside the game; the bot has no database access.
 - Staff characters are hidden from `/trainer`.
@@ -234,6 +235,7 @@ server -> {"type":"response","requestId":"1","ok":true,"result":{...}}
 | Event kind | Bot feature |
 | --- | --- |
 | `chat` | `#game-chat` as `[Game] Name: text` |
+| `staff_chat` (scope `admin`, feature `staffChat`) | `room` `tutors` (Counselor) -> `#tutor-room`, `gamemasters` (Staff) -> `#gm-room`, only while the room is private |
 | `catch` | `#pokemon-catches` (filtered by catch mode) |
 | `spawn` | `#shiny-spawns` / `#legendary-spawns` |
 | `legendary` | `#legendary-spawns`: one post and thread per wild legendary encounter |
@@ -249,6 +251,7 @@ server -> {"type":"response","requestId":"1","ok":true,"result":{...}}
 | Request | Used by |
 | --- | --- |
 | `chat.send` | Discord -> game chat |
+| `chat.staff` (`{room, author, text}`) | `#tutor-room` / `#gm-room` -> the Counselor / Staff channel |
 | `trainer.lookup` | `/trainer` |
 | `pokemon.lookup`, `pokemon.search` | `/pokemon` and its autocomplete |
 | `server.status` | `/server`, `#server-status` (including the optional `restart`), `check-bridge` |

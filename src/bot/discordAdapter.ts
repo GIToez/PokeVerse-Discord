@@ -416,6 +416,17 @@ export class DiscordGuildPort implements GuildPort {
     }
   }
 
+  async allowRoleInChannel(channelId: string, roleId: string, permissions: PermissionName[], reason: string): Promise<void> {
+    const channel = await this.guild.channels.fetch(channelId);
+    if (channel?.type === ChannelType.GuildText || channel?.type === ChannelType.GuildForum) {
+      await channel.permissionOverwrites.edit(
+        roleId,
+        Object.fromEntries(permissions.map((name) => [name, true])),
+        { reason, type: OverwriteType.Role },
+      );
+    }
+  }
+
   botChannelPermissions(channelId: string): PermissionName[] | undefined {
     const channel = this.guild.channels.cache.get(channelId);
     const me = this.guild.members.me;
