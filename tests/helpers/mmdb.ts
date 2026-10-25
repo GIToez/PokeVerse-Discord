@@ -61,7 +61,7 @@ export interface MmdbNetwork {
   data: Record<string, Value>;
 }
 
-export function writeMmdb(file: string, networks: MmdbNetwork[], databaseType = "Test-City"): void {
+export function writeMmdb(file: string, networks: MmdbNetwork[], databaseType = "Test-City", buildEpoch = 1_700_000_000): void {
   const EMPTY = -1;
   const nodes: Array<[number, number]> = [[EMPTY, EMPTY]];
   const data: Buffer[] = [];
@@ -106,7 +106,7 @@ export function writeMmdb(file: string, networks: MmdbNetwork[], databaseType = 
     languages: ["en"],
     binary_format_major_version: 2,
     binary_format_minor_version: 0,
-    build_epoch: 1_700_000_000,
+    build_epoch: buildEpoch,
     description: { en: "PokeVerse test database" },
   });
   writeFileSync(

@@ -73,6 +73,8 @@ export function isPrivateCommand(commandName: string): boolean {
   return commandName === "pokeverse" || commandName === "booster" || (LINK_COMMANDS as readonly string[]).includes(commandName);
 }
 
+/** A free GeoIP database is refreshed monthly; older than this, the refresh stopped working. */
+const GEOIP_OUTDATED_DAYS = 60;
 const OFFLINE_TEXT = "The PokeVerse game server is offline right now. Please try again later.";
 
 function reply(text: string, ephemeral = true, color?: number): CommandResponse {
@@ -333,7 +335,7 @@ export class CommandRouter {
       `Delivery queues: ${Object.entries(this.options.queueSizes()).map(([name, size]) => `${name} ${size}`).join(", ")}`,
     ];
     if (this.options.activity) {
-      lines.push(`Activity log: IP **${config.activity.ipMode}**, retention **${config.activity.retentionDays} days**, GeoIP **${config.activity.geoipDatabase ? "local database" : "off"}**`);
+      lines.push(`Activity log: IP **${config.activity.ipMode}**, retention **${config.activity.retentionDays} days**, GeoIP **${this.geoStatus(this.options.activity)}**`);
     } else {
       lines.push("Activity log: **off**");
     }
@@ -361,5 +363,14 @@ export class CommandRouter {
       lines.push("", `Counters: ${interesting.join(", ")}`);
     }
     return reply(lines.join("\n").slice(0, 4000), true, COLORS.info);
+  }
+
+  private geoStatus(activity: ActivityLog): string {
+    const geo = activity.geo;
+    if (!geo.enabled) {
+      return this.options.config.activity.geoipDatabase ? "off (the database can't be read)" : "off";
+    }
+    const ageDays = geo.builtAt ? (Date.now() - geo.builtAt.getTime()) / 86_400_000 : 0;
+    return ageDays > GEOIP_OUTDATED_DAYS ? `${geo.description}, outdated (over ${GEOIP_OUTDATED_DAYS} days old)` : geo.description;
   }
 }

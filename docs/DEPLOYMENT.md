@@ -118,7 +118,7 @@ New settings, all optional, with these defaults when they are not in `.env.produ
 | `ACTIVITY_LOG_IP` | `full` | `full`, `masked` or `hidden` |
 | `ACTIVITY_RETENTION_DAYS` | `30` | Records and posted messages are deleted afterwards |
 | `ACTIVITY_FILE` | `data/activity.production.json` | Session records (no IPs, no account ids) |
-| `GEOIP_DATABASE` | empty (off) | Local MaxMind-format database, see [PRIVACY.md](PRIVACY.md) |
+| `GEOIP_DATABASE` | empty (off) | Local MaxMind-format database, see [PRIVACY.md](PRIVACY.md). `pokeverse-ctl discord geoip` downloads DB-IP City Lite and sets it; a monthly timer refreshes the file and the bot reloads it within an hour |
 | `LINKING_ENABLED` | `true` | `/link` and the account commands |
 | `VERIFIED_ROLE_NAME` | `Verified Trainer` | Role for linked members |
 | `PREMIUM_ROLE_ENABLED` / `PREMIUM_ROLE_NAME` | `true` / `Ace Trainer` | Role while the account has premium time |

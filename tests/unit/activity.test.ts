@@ -1,10 +1,10 @@
-import { readFileSync, statSync, writeFileSync } from "node:fs";
+import { readFileSync, statSync, utimesSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import type { PlayerLoginEvent, PlayerLogoutEvent } from "../../src/integrations/pokeverse/protocol.js";
 import { ActivityLog } from "../../src/services/activity/activityLog.js";
 import { ActivityStore } from "../../src/services/activity/activityStore.js";
-import { GeoIp } from "../../src/services/activity/geoip.js";
+import { DBIP_ATTRIBUTION, GeoIp } from "../../src/services/activity/geoip.js";
 import { maskIp, nonPublicRange, parseIpv4 } from "../../src/services/activity/ip.js";
 import { checkPrivacy } from "../../src/services/activity/privacy.js";
 import { DeliveryQueue } from "../../src/utils/deliveryQueue.js";
@@ -144,6 +144,53 @@ describe("geoip", () => {
     expect(GeoIp.open(join(dir, "bad.mmdb"), silentLogger).enabled).toBe(false);
     expect(GeoIp.open(undefined, silentLogger).description).toBe("disabled");
     expect(GeoIp.disabled().lookup(IP)).toBeUndefined();
+  });
+
+  const LONDON = { cidr: "81.2.69.0/24", data: { city: { names: { en: "London" } }, country: { names: { en: "United Kingdom" } } } };
+  const PARIS = { cidr: "81.2.69.0/24", data: { city: { names: { en: "Paris" } }, country: { names: { en: "France" } } } };
+
+  it("credits DB-IP in the activity footer, and only for a DB-IP database", async () => {
+    const dir = tempDir();
+    writeMmdb(join(dir, "dbip-city-lite.mmdb"), [LONDON], "DBIP-City-Lite");
+    writeMmdb(join(dir, "GeoLite2-City.mmdb"), [LONDON], "GeoLite2-City");
+    writeMmdb(join(dir, "dbip-city-lite-2026-10.mmdb"), [LONDON], "City-Lite");
+    const dbip = GeoIp.open(join(dir, "dbip-city-lite.mmdb"), silentLogger);
+    expect(dbip.attribution).toBe(DBIP_ATTRIBUTION);
+    expect(GeoIp.open(join(dir, "GeoLite2-City.mmdb"), silentLogger).attribution).toBeUndefined();
+    expect(GeoIp.open(join(dir, "dbip-city-lite-2026-10.mmdb"), silentLogger).attribution).toBe(DBIP_ATTRIBUTION);
+
+    const { log, queue, sink, fields } = setup({ geo: dbip });
+    log.handleLogin(envelope(login()));
+    await queue.idle();
+    expect(fields()["Location (approximate)"]).toBe("London, United Kingdom");
+    expect(sink.sent[0]!.message.embeds![0]!.footer!.text).toBe("Private staff log. Kept 30 days. IP geolocation by DB-IP (db-ip.com).");
+
+    const plain = setup({ geo: GeoIp.open(join(dir, "GeoLite2-City.mmdb"), silentLogger) });
+    plain.log.handleLogin(envelope(login()));
+    await plain.queue.idle();
+    expect(plain.sink.sent[0]!.message.embeds![0]!.footer!.text).toBe("Private staff log. Kept 30 days.");
+  });
+
+  it("picks up a replaced database file, and keeps the old one when the new file is broken", () => {
+    const file = join(tempDir(), "dbip-city-lite.mmdb");
+    writeMmdb(file, [LONDON], "DBIP-City-Lite", 1_790_000_000);
+    const lines: string[] = [];
+    const geo = GeoIp.open(file, createLogger({ level: "debug", format: "json", write: (line) => lines.push(line) }));
+    expect(geo.description).toBe("DBIP-City-Lite (2026-09-21)");
+    expect(geo.reloadIfChanged()).toBe(false);
+
+    writeMmdb(file, [PARIS], "DBIP-City-Lite", 1_792_600_000);
+    utimesSync(file, new Date(), new Date(Date.now() + 60_000));
+    expect(geo.reloadIfChanged()).toBe(true);
+    expect(geo.lookup(IP)?.label).toBe("Paris, France");
+    expect(geo.description).toBe("DBIP-City-Lite (2026-10-21)");
+
+    writeFileSync(file, "half a download");
+    utimesSync(file, new Date(), new Date(Date.now() + 120_000));
+    expect(geo.reloadIfChanged()).toBe(false);
+    expect(geo.lookup(IP)?.label).toBe("Paris, France");
+    expect(lines.join("\n")).toContain("keeping the one loaded");
+    expect(geo.reloadIfChanged()).toBe(false);
   });
 });
 

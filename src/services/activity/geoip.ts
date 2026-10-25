@@ -1,4 +1,5 @@
-import { readFileSync } from "node:fs";
+import { readFileSync, statSync } from "node:fs";
+import { basename } from "node:path";
 import { Reader, type Response } from "mmdb-lib";
 import type { Logger } from "../../utils/logger.js";
 import { nonPublicRange } from "./ip.js";
@@ -25,39 +26,95 @@ interface GeoRecord {
   autonomous_system_organization?: string;
 }
 
+/** DB-IP's free databases are CC BY 4.0: wherever their locations are shown, DB-IP is credited. */
+export const DBIP_ATTRIBUTION = "IP geolocation by DB-IP (db-ip.com)";
+
 /**
  * Approximate location from a local MaxMind-format database (GeoLite2 City/Country,
  * DB-IP Lite, ...). Lookups never leave the machine; without a database the activity log
  * shows no location. Locations are approximate and often wrong for VPNs and mobile networks.
+ * A replaced file is picked up by `reloadIfChanged`, so a monthly refresh needs no restart.
  */
 export class GeoIp {
+  private reader: Reader<Response> | undefined;
+  private modifiedMs = 0;
+  /** e.g. "DBIP-City-Lite (2026-10-01)", or "disabled". */
+  description = "disabled";
+  /** Credit to show next to the locations, when the database's licence asks for one. */
+  attribution: string | undefined;
+  /** When the loaded database was built. */
+  builtAt: Date | undefined;
+
   private constructor(
-    private readonly reader: Reader<Response> | undefined,
-    readonly description: string,
+    private readonly path: string | undefined,
+    private readonly logger: Logger | undefined,
   ) {}
 
   static disabled(): GeoIp {
-    return new GeoIp(undefined, "disabled");
+    return new GeoIp(undefined, undefined);
   }
 
   /** Opens the database; logs and falls back to "disabled" when it cannot be read. */
   static open(path: string | undefined, logger: Logger): GeoIp {
-    if (!path) {
-      return GeoIp.disabled();
+    const geo = new GeoIp(path, logger);
+    const error = path ? geo.load() : undefined;
+    if (error) {
+      logger.error("Could not open the GeoIP database; locations are disabled", { path, error });
     }
-    try {
-      const reader = new Reader<Response>(readFileSync(path));
-      const description = `${reader.metadata.databaseType} (${reader.metadata.buildEpoch.toISOString().slice(0, 10)})`;
-      logger.info("GeoIP database loaded", { database: description });
-      return new GeoIp(reader, description);
-    } catch (error) {
-      logger.error("Could not open the GeoIP database; locations are disabled", { path, error: (error as Error).message });
-      return GeoIp.disabled();
-    }
+    return geo;
   }
 
   get enabled(): boolean {
     return this.reader !== undefined;
+  }
+
+  /**
+   * Reloads the database when its file changed (a monthly download). A file that can't be read
+   * keeps the database already loaded. Returns true when a new database was loaded.
+   */
+  reloadIfChanged(): boolean {
+    if (!this.path) {
+      return false;
+    }
+    let modifiedMs: number;
+    try {
+      modifiedMs = statSync(this.path).mtimeMs;
+    } catch {
+      return false;
+    }
+    if (modifiedMs === this.modifiedMs) {
+      return false;
+    }
+    const error = this.load();
+    if (error) {
+      this.modifiedMs = modifiedMs;
+      this.logger?.warn("The GeoIP database file changed but can't be read; keeping the one loaded", {
+        path: this.path, database: this.description, error,
+      });
+      return false;
+    }
+    return true;
+  }
+
+  /** Undefined when loaded, otherwise why not. */
+  private load(): string | undefined {
+    if (!this.path) {
+      return "no path";
+    }
+    try {
+      const modifiedMs = statSync(this.path).mtimeMs;
+      const reader = new Reader<Response>(readFileSync(this.path));
+      const type = reader.metadata.databaseType;
+      this.reader = reader;
+      this.modifiedMs = modifiedMs;
+      this.builtAt = reader.metadata.buildEpoch;
+      this.description = `${type} (${reader.metadata.buildEpoch.toISOString().slice(0, 10)})`;
+      this.attribution = /db-?ip/i.test(type) || /db-?ip/i.test(basename(this.path)) ? DBIP_ATTRIBUTION : undefined;
+      this.logger?.info("GeoIP database loaded", { database: this.description });
+      return undefined;
+    } catch (error) {
+      return (error as Error).message;
+    }
   }
 
   lookup(ip: string | undefined): GeoResult | undefined {

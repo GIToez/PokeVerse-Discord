@@ -4,6 +4,8 @@ import { describe, expect, it } from "vitest";
 import { buildCommandDefinitions } from "../../src/commands/definitions.js";
 import { CommandRouter, type CommandInput } from "../../src/commands/router.js";
 import { parseArgs } from "../../src/cli.js";
+import type { ActivityLog } from "../../src/services/activity/activityLog.js";
+import { GeoIp } from "../../src/services/activity/geoip.js";
 import { BridgeRequestError } from "../../src/integrations/pokeverse/bridgeClient.js";
 import { Announcer } from "../../src/services/announcements/announcer.js";
 import { ArtworkResolver } from "../../src/services/pokemon/artwork.js";
@@ -17,11 +19,12 @@ import { LinkCommands } from "../../src/commands/linkCommands.js";
 import { isPrivateCommand } from "../../src/commands/router.js";
 import { LinkService, type LinkChange } from "../../src/services/linking/linkService.js";
 import { DEV_GUILD, FakeChannels, FakeGame, FakeGuild, FakeLinkApi, LINKED_USER, makeConfig, makeStore, TRAINER, tempDir } from "../helpers/fakes.js";
+import { writeMmdb } from "../helpers/mmdb.js";
 
 const ADMIN = "700000000000000001";
 const MEMBER = "700000000000000002";
 
-function setup(overrides: Record<string, string> = {}, artworkDir?: string, withLinking = false) {
+function setup(overrides: Record<string, string> = {}, artworkDir?: string, withLinking = false, activity?: ActivityLog) {
   const config = makeConfig(overrides);
   const store = makeStore(config);
   const game = new FakeGame();
@@ -63,6 +66,7 @@ function setup(overrides: Record<string, string> = {}, artworkDir?: string, with
     logger: silentLogger,
     metrics,
     linking,
+    activity,
   });
   const run = (commandName: string, options: Record<string, string> = {}, extra: Partial<CommandInput> = {}) =>
     router.handle({
@@ -269,6 +273,23 @@ describe("/pokeverse (admin)", () => {
     expect(text).toContain("Profile: **development**");
     expect(text).toContain("Game bridge: **connected**");
     expect(text).toContain("Catch announcements: **all**");
+  });
+
+  it("shows the GeoIP database, its age, and an unreadable database", async () => {
+    const dir = tempDir();
+    const fresh = join(dir, "dbip-city-lite.mmdb");
+    writeMmdb(fresh, [], "DBIP-City-Lite", Math.floor(Date.now() / 1000) - 5 * 86400);
+    const old = join(dir, "old.mmdb");
+    writeMmdb(old, [], "DBIP-City-Lite", 1_700_000_000);
+    const status = async (geo: GeoIp, overrides: Record<string, string> = {}) => {
+      const { run } = setup(overrides, undefined, false, { geo } as unknown as ActivityLog);
+      return (await run("pokeverse", {}, { subcommand: "status", user: adminUser })).message.embeds![0]!.description!;
+    };
+    expect(await status(GeoIp.open(fresh, silentLogger))).toMatch(/GeoIP \*\*DBIP-City-Lite \(\d{4}-\d{2}-\d{2}\)\*\*/);
+    expect(await status(GeoIp.open(old, silentLogger))).toContain("DBIP-City-Lite (2023-11-14), outdated (over 60 days old)");
+    expect(await status(GeoIp.disabled())).toContain("GeoIP **off**");
+    expect(await status(GeoIp.open(join(dir, "missing.mmdb"), silentLogger), { GEOIP_DATABASE: join(dir, "missing.mmdb") }))
+      .toContain("GeoIP **off (the database can't be read)**");
   });
 });
 

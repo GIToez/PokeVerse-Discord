@@ -58,7 +58,16 @@ in the bot process; the address never leaves the machine.
 
 - Free options: **MaxMind GeoLite2 City or Country** (free account and license agreement
   required; download it yourself and keep it updated) or **DB-IP IP to City Lite** (CC BY 4.0,
-  attribution required). The bot does not ship or download a database.
+  attribution required). The bot itself does not ship or download a database.
+- Production: `pokeverse-ctl discord geoip` (game repository) downloads DB-IP City Lite to
+  `/opt/pokeverse/discord/shared/geoip/dbip-city-lite.mmdb` and a monthly timer refreshes it.
+  Only the database file is downloaded; no IP address is sent anywhere.
+- The bot checks the file every hour and loads a replaced one without a restart. A file that
+  can't be read keeps the database already loaded.
+- With a DB-IP database every `#player-activity` embed credits it in the footer ("IP
+  geolocation by DB-IP (db-ip.com)"), as its licence asks. Other databases get no credit line.
+- `/pokeverse status` shows the database and its build date, and says "outdated" when it is
+  over 60 days old (the monthly refresh stopped working).
 - Private, loopback, carrier-grade NAT, link-local and reserved addresses show
   "No location (private network)" and similar; no lookup is made.
 - Locations are approximate (often only the country or the provider's city), and wrong for

@@ -93,6 +93,11 @@ export class ActivityLog {
     this.options.store.flush();
   }
 
+  /** The location database (diagnostics). */
+  get geo(): GeoIp {
+    return this.options.geo;
+  }
+
   /** Current privacy state of #player-activity (diagnostics). */
   privacy(): PrivacyCheck | undefined {
     const guild = this.options.guild();
@@ -182,6 +187,7 @@ export class ActivityLog {
   }
 
   async enforceRetention(): Promise<void> {
+    this.options.geo.reloadIfChanged();
     const cutoff = this.seconds() - this.options.config.retentionDays * 86400;
     const messages = this.options.store.expire(cutoff);
     if (messages.length === 0) {
@@ -391,7 +397,8 @@ export class ActivityLog {
   }
 
   private footer(): string {
-    return `Private staff log. Kept ${this.options.config.retentionDays} days.`;
+    const credit = this.options.geo.enabled && this.options.geo.attribution ? ` ${this.options.geo.attribution}.` : "";
+    return `Private staff log. Kept ${this.options.config.retentionDays} days.${credit}`;
   }
 
   private seconds(): number {
