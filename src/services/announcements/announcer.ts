@@ -6,7 +6,6 @@ import {
   type AnnouncementEvent,
   type BroadcastEvent,
   type GameEventEnvelope,
-  type RestartWarningEvent,
 } from "../../integrations/pokeverse/protocol.js";
 import { RecentKeys } from "../../utils/dedupe.js";
 import type { DeliveryQueue } from "../../utils/deliveryQueue.js";
@@ -19,7 +18,6 @@ export type AnnouncementCategory = (typeof ANNOUNCEMENT_CATEGORIES)[number];
 
 export interface AnnouncerOptions {
   broadcasts: boolean;
-  restartWarnings: boolean;
   /** Game announcement categories posted here. */
   categories?: Set<string>;
   /** Category -> role name each one pings on its own ("verified": the Verified Trainer role). */
@@ -32,23 +30,13 @@ export interface AnnouncerOptions {
   api?: AnnouncementApi;
   /** A link to the Discord event of a calendar occurrence, when there is one. */
   calendarLink?: (key: string) => string | undefined;
-  /** Broadcasts/warnings older than this are dropped (queued while the bot was away). */
+  /** Broadcasts older than this are dropped (queued while the bot was away). */
   maxEventAgeSeconds: number;
   channels: ChannelDirectory;
   queue: DeliveryQueue;
   logger: Logger;
   metrics: Metrics;
   now?: () => number;
-}
-
-function minutesText(minutes: number | null | undefined): string {
-  if (minutes === null || minutes === undefined) {
-    return "soon";
-  }
-  if (minutes <= 0) {
-    return "now";
-  }
-  return `in ${minutes} minute${minutes === 1 ? "" : "s"}`;
 }
 
 export function buildBroadcastEmbed(event: BroadcastEvent, time: number): APIEmbed {
@@ -60,33 +48,6 @@ export function buildBroadcastEmbed(event: BroadcastEvent, time: number): APIEmb
     footer: event.author ? { text: `From ${event.author}` } : undefined,
     timestamp: new Date(time * 1000).toISOString(),
   };
-}
-
-export function buildRestartWarningEmbed(event: RestartWarningEvent, time: number): APIEmbed {
-  let title: string;
-  let description: string;
-  let color: number = COLORS.warning;
-  switch (event.reason) {
-    case "global_save":
-      title = "Server save";
-      description = `The server will save ${minutesText(event.minutes)}${event.shutdown ? " and then shut down" : ""}. ` +
-        "Please find a safe place.";
-      break;
-    case "shutdown":
-      title = "Server restart";
-      description = `The server will shut down ${minutesText(event.minutes)}. Please log out safely.`;
-      color = COLORS.danger;
-      break;
-    case "shutdown_cancelled":
-      title = "Restart cancelled";
-      description = "The scheduled server shutdown was cancelled.";
-      color = COLORS.success;
-      break;
-    default:
-      title = "Server notice";
-      description = `Server event: ${plain(event.reason)} ${minutesText(event.minutes)}.`;
-  }
-  return { title, description, color, timestamp: new Date(time * 1000).toISOString() };
 }
 
 const CATEGORY_STYLE: Record<AnnouncementCategory, { title: string; color: number }> = {
@@ -149,7 +110,7 @@ export function pingableRoles(roles: RoleInfo[], mentionEveryone: boolean): Role
   return roles.filter((role) => !role.managed && (mentionEveryone || role.mentionable !== false));
 }
 
-/** #game-announcements: GM/staff broadcasts, restart warnings and admin announcements. */
+/** #game-announcements: GM/staff broadcasts, game announcements and admin announcements. Restart warnings go to #server-status. */
 export class Announcer {
   private readonly seen = new RecentKeys(2000);
   private readonly now: () => number;
@@ -262,14 +223,6 @@ export class Announcer {
     const roles = pingableRoles(await guild.listRoles(), everyone).map((role) => role.name).slice(0, 50);
     await api.roles(roles, everyone);
     this.options.metrics.increment("announcements.roles_synced");
-  }
-
-  handleRestartWarning(envelope: GameEventEnvelope<RestartWarningEvent>): boolean {
-    if (!this.options.restartWarnings || !this.accept(envelope)) {
-      return false;
-    }
-    this.post(`restart ${envelope.id}`, buildRestartWarningEmbed(envelope.event, envelope.time));
-    return true;
   }
 
   /** Admin announcement from /pokeverse announce. Resolves with the message id. */

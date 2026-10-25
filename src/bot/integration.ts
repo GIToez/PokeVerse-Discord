@@ -159,7 +159,6 @@ export class GameIntegration {
     });
     this.announcer = new Announcer({
       broadcasts: config.announcements.broadcasts,
-      restartWarnings: config.announcements.restartWarnings,
       categories: config.announcements.categories,
       pings: config.announcements.pings,
       staffPings: config.announcements.staffPings,
@@ -366,7 +365,7 @@ export class GameIntegration {
           this.announcer.handleBroadcast({ ...envelope, event });
           break;
         case "restart_warning":
-          this.announcer.handleRestartWarning({ ...envelope, event });
+          this.status.onRestartWarning(event, envelope.time);
           break;
         case "server_state":
           this.status.onServerState({ ...envelope, event });

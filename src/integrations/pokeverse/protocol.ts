@@ -187,6 +187,9 @@ export const broadcastEventSchema = z.object({
   text: z.string(),
 });
 
+export const RESTART_REASONS = ["daily", "staff", "update"] as const;
+export type RestartReason = (typeof RESTART_REASONS)[number];
+
 export const restartWarningEventSchema = z.object({
   kind: z.literal("restart_warning"),
   reason: z.string(),
@@ -460,6 +463,8 @@ export const serverStatusResultSchema = z.object({
   maxPlayers: z.number().nullish(),
   uptime: z.number(),
   bootId: z.string(),
+  /** The next restart the game has planned (unix seconds), or null when none is. */
+  restart: z.object({ at: z.number().int(), reason: z.enum(RESTART_REASONS) }).nullish(),
 });
 
 export const chatSendResultSchema = z.object({ delivered: z.number(), text: z.string() });

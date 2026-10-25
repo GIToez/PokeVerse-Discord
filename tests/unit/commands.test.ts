@@ -47,7 +47,7 @@ function setup(overrides: Record<string, string> = {}, artworkDir?: string, with
         api: links,
       }
     : undefined;
-  const announcer = new Announcer({ broadcasts: true, restartWarnings: true, maxEventAgeSeconds: 600, channels, queue, logger: silentLogger, metrics });
+  const announcer = new Announcer({ broadcasts: true, maxEventAgeSeconds: 600, channels, queue, logger: silentLogger, metrics });
   const status = new StatusService({ game, channels, store, refreshSeconds: 60, logger: silentLogger, metrics });
   const router = new CommandRouter({
     config,

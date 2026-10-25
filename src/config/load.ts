@@ -47,7 +47,6 @@ export interface BotConfig {
   };
   announcements: {
     broadcasts: boolean;
-    restartWarnings: boolean;
     categories: Set<string>;
     /** Category -> role name ("verified" is the Verified Trainer role). */
     pings: Record<string, string>;
@@ -253,7 +252,6 @@ export function loadConfig(options: LoadOptions): BotConfig {
     },
     announcements: {
       broadcasts: raw.ANNOUNCE_BROADCASTS,
-      restartWarnings: raw.ANNOUNCE_RESTART_WARNINGS,
       categories: new Set(raw.ANNOUNCE_CATEGORIES),
       pings: raw.ANNOUNCE_PINGS,
       staffPings: raw.ANNOUNCE_STAFF_PINGS,

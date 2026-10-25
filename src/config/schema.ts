@@ -108,6 +108,7 @@ export const envSchema = z.object({
   SPAWN_MAX_EVENT_AGE_SECONDS: int(300, 1, 86400),
 
   ANNOUNCE_BROADCASTS: bool(true),
+  /** Ignored: restart and save countdowns live in the #server-status embed. Still accepted so old .env files load. */
   ANNOUNCE_RESTART_WARNINGS: bool(true),
   /** Game announcements posted to #game-announcements ("none" for none). Legendaries have #legendary-spawns. */
   ANNOUNCE_CATEGORIES: z

@@ -2,7 +2,7 @@ import type { APIEmbed } from "discord.js";
 import type { ChannelDirectory } from "../../bot/ports.js";
 import type { ConnectedInfo } from "../../integrations/pokeverse/bridgeClient.js";
 import type { GameApi } from "../../integrations/pokeverse/gameApi.js";
-import type { GameEventEnvelope, ServerStateEvent } from "../../integrations/pokeverse/protocol.js";
+import type { GameEventEnvelope, RestartReason, RestartWarningEvent, ServerStateEvent } from "../../integrations/pokeverse/protocol.js";
 import { discordTimestamp, formatDuration } from "../../utils/format.js";
 import type { Logger } from "../../utils/logger.js";
 import type { Metrics } from "../../utils/metrics.js";
@@ -26,6 +26,45 @@ export interface StatusSnapshot {
   disconnects: number;
   /** Unix ms of the last successful status read. */
   updatedAt: number | undefined;
+  /** The next restart the game has planned (server.status). */
+  scheduledRestart: { at: number; reason: RestartReason } | undefined;
+  /** A restart or save the game is counting down to (restart_warning events), unix seconds. */
+  warning: RestartCountdown | undefined;
+}
+
+export interface RestartCountdown {
+  at: number;
+  kind: "restart" | "save";
+  /** The game run that sent the warning; a different boot id means the restart happened. */
+  bootId?: string;
+}
+
+/** A save is over shortly after its time; a restart the server didn't do is stale after this too. */
+const COUNTDOWN_GRACE_S = 120;
+/** How long after a warned restart an unreachable server shows as "Restarting" rather than "Offline". */
+const RESTARTING_WINDOW_S = 600;
+/** A warning's minutes are rounded; a planned restart this close to it is the same restart. */
+const SAME_RESTART_S = 90;
+
+const RESTART_LABELS: Record<RestartReason, string> = {
+  daily: "Daily restart",
+  staff: "Restart scheduled by staff",
+  update: "Update restart",
+};
+
+/** The countdown that still applies at `now` (unix seconds), if any. */
+export function activeCountdown(snapshot: StatusSnapshot, now: number): RestartCountdown | undefined {
+  const warning = snapshot.warning;
+  if (!warning) {
+    return undefined;
+  }
+  if (warning.kind === "restart" && !snapshot.online) {
+    return now <= warning.at + RESTARTING_WINDOW_S ? warning : undefined;
+  }
+  if (warning.kind === "restart" && warning.bootId !== undefined && snapshot.bootId !== undefined && warning.bootId !== snapshot.bootId) {
+    return undefined;
+  }
+  return now <= warning.at + COUNTDOWN_GRACE_S ? warning : undefined;
 }
 
 export interface StatusServiceOptions {
@@ -48,18 +87,38 @@ const STATE_LABELS: Record<string, string> = {
   shutdown: "Shutting down",
 };
 
-export function describeState(snapshot: StatusSnapshot): { label: string; color: number } {
+export function describeState(snapshot: StatusSnapshot, now = Date.now() / 1000): { label: string; color: number } {
+  const countdown = activeCountdown(snapshot, now);
   if (!snapshot.online) {
-    return { label: "Offline", color: COLORS.danger };
+    return countdown?.kind === "restart" ? { label: "Restarting", color: COLORS.warning } : { label: "Offline", color: COLORS.danger };
   }
   const state = snapshot.state ?? "normal";
+  if (state === "normal" && countdown?.kind === "restart") {
+    return { label: "Restarting soon", color: COLORS.warning };
+  }
   const label = STATE_LABELS[state] ?? state;
   return { label, color: state === "normal" ? COLORS.success : COLORS.warning };
 }
 
+function when(at: number): string {
+  return `${discordTimestamp(at, "t")} (${discordTimestamp(at, "R")})`;
+}
+
 export function buildStatusEmbed(snapshot: StatusSnapshot, now: number): APIEmbed {
-  const { label, color } = describeState(snapshot);
+  const nowS = now / 1000;
+  const { label, color } = describeState(snapshot, nowS);
+  const countdown = activeCountdown(snapshot, nowS);
   const fields: NonNullable<APIEmbed["fields"]> = [{ name: "Status", value: label, inline: true }];
+  let description: string | undefined;
+  if (countdown?.kind === "restart") {
+    description = countdown.at <= nowS || !snapshot.online
+      ? "The server is restarting. You can log in again in about a minute."
+      : `The server restarts ${discordTimestamp(countdown.at, "R")} (at ${discordTimestamp(countdown.at, "t")}). Please log out safely.`;
+  } else if (countdown?.kind === "save") {
+    description = countdown.at <= nowS
+      ? "The server is saving."
+      : `The server saves ${discordTimestamp(countdown.at, "R")}. Please find a safe place.`;
+  }
   if (snapshot.online) {
     const players = snapshot.playersOnline ?? 0;
     fields.push({
@@ -74,6 +133,15 @@ export function buildStatusEmbed(snapshot: StatusSnapshot, now: number): APIEmbe
         inline: true,
       });
     }
+  }
+  if (countdown?.kind === "restart" && countdown.at > nowS && snapshot.online) {
+    fields.push({ name: "Next restart", value: when(countdown.at), inline: true });
+  } else if (!countdown && snapshot.online && snapshot.scheduledRestart && snapshot.scheduledRestart.at > nowS) {
+    fields.push({
+      name: "Next restart",
+      value: `${RESTART_LABELS[snapshot.scheduledRestart.reason]} at ${when(snapshot.scheduledRestart.at)}`,
+      inline: true,
+    });
   }
   if (snapshot.lastRestartAt !== undefined) {
     fields.push({ name: "Last restart", value: discordTimestamp(snapshot.lastRestartAt), inline: true });
@@ -90,6 +158,7 @@ export function buildStatusEmbed(snapshot: StatusSnapshot, now: number): APIEmbe
   }
   return {
     title: `${plain(snapshot.serverName ?? "PokeVerse")} server status`,
+    ...(description ? { description } : {}),
     color,
     fields,
     footer: { text: snapshot.online ? "Updates automatically" : "The game server is not reachable from the bot" },
@@ -124,6 +193,8 @@ export class StatusService {
       lastDisconnectReason: undefined,
       disconnects: 0,
       updatedAt: undefined,
+      scheduledRestart: undefined,
+      warning: saved.pendingRestart,
     };
   }
 
@@ -149,6 +220,9 @@ export class StatusService {
     this.snapshot.bootId = info.bootId;
     const saved = this.options.store.get();
     const restarted = info.restarted || (saved.lastBootId !== undefined && saved.lastBootId !== info.bootId);
+    if (restarted || (this.snapshot.warning?.bootId !== undefined && this.snapshot.warning.bootId !== info.bootId)) {
+      this.setWarning(undefined);
+    }
     if (restarted) {
       this.snapshot.lastRestartAt = Math.floor(this.now() / 1000);
       this.options.metrics.increment("status.restarts_detected");
@@ -183,6 +257,45 @@ export class StatusService {
     void this.render();
   }
 
+  /**
+   * A restart_warning event: the countdown goes into the status message (never a new post).
+   * `time`: when the game sent it, unix seconds.
+   */
+  onRestartWarning(event: RestartWarningEvent, time: number): void {
+    switch (event.reason) {
+      case "shutdown":
+      case "global_save": {
+        let at = time + Math.max(0, event.minutes ?? 0) * 60;
+        const planned = this.snapshot.scheduledRestart;
+        if (planned && Math.abs(planned.at - at) <= SAME_RESTART_S) {
+          at = planned.at;
+        }
+        const kind = event.reason === "shutdown" || event.shutdown ? "restart" : "save";
+        this.setWarning({ at, kind, ...(this.snapshot.bootId ? { bootId: this.snapshot.bootId } : {}) });
+        this.options.metrics.increment("status.restart_warnings");
+        void this.render();
+        break;
+      }
+      case "shutdown_cancelled":
+        this.setWarning(undefined);
+        this.snapshot.scheduledRestart = undefined;
+        this.options.metrics.increment("status.restart_cancelled");
+        void this.refresh();
+        break;
+      default:
+        this.options.logger.debug("Ignoring an unknown restart warning", { reason: event.reason });
+    }
+  }
+
+  private setWarning(warning: RestartCountdown | undefined): void {
+    this.snapshot.warning = warning;
+    if (JSON.stringify(this.options.store.get().pendingRestart) !== JSON.stringify(warning)) {
+      this.options.store.update((state) => {
+        state.pendingRestart = warning ? { ...warning } : undefined;
+      });
+    }
+  }
+
   /** Reads server.status from the game (if connected) and re-renders. */
   async refresh(): Promise<StatusSnapshot> {
     if (this.options.game.connected) {
@@ -195,12 +308,16 @@ export class StatusService {
         this.snapshot.maxPlayers = status.maxPlayers ?? undefined;
         this.snapshot.startedAt = Math.floor(this.now() / 1000 - status.uptime);
         this.snapshot.bootId = status.bootId;
+        this.snapshot.scheduledRestart = status.restart ?? undefined;
         this.snapshot.updatedAt = this.now();
       } catch (error) {
         this.options.logger.warn("Could not read the server status", { error });
       }
     } else {
       this.snapshot.online = false;
+    }
+    if (this.snapshot.warning && !activeCountdown(this.snapshot, this.now() / 1000)) {
+      this.setWarning(undefined);
     }
     await this.render();
     return { ...this.snapshot };

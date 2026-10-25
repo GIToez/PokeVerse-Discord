@@ -99,12 +99,14 @@ describe("bot <-> game bridge pipeline", () => {
     await waitFor(() => channels.channel("catches").sent.length === 1, 3000, "catch");
     await waitFor(() => channels.channel("shinySpawns").sent.length === 1, 3000, "shiny");
     await waitFor(() => channels.channel("legendarySpawns").sent.length === 1, 3000, "legendary");
-    await waitFor(() => channels.channel("announcements").sent.length === 2, 3000, "announcements");
+    await waitFor(() => channels.channel("announcements").sent.length === 1, 3000, "announcements");
     await integration.idle();
     expect(channels.channel("catches").sent[0]!.message.embeds![0]!.title).toBe("Rattata caught!");
     expect(channels.channel("shinySpawns").sent[0]!.message.embeds![0]!.fields).toContainEqual({ name: "Location", value: "near Pallet", inline: false });
     await waitFor(() => channels.channel("serverStatus").edits.some((edit) => JSON.stringify(edit.message).includes("Maintenance")), 3000, "status edit");
+    await waitFor(() => channels.channel("serverStatus").edits.some((edit) => JSON.stringify(edit.message).includes("The server saves")), 3000, "save countdown");
     expect(channels.channel("serverStatus").sent).toHaveLength(1);
+    expect(channels.channel("announcements").sent).toHaveLength(1);
   });
 
   it("answers lookups through the bridge", async () => {

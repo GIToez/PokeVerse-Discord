@@ -370,11 +370,19 @@ live("live: bot against the real PokeVerse game server", () => {
     expect(activity().filter((embed) => embed?.title?.startsWith("Session ended"))).toHaveLength(0);
   });
 
-  it("posts restart warnings and their cancellation", async () => {
+  it("shows a restart countdown in #server-status instead of posting it", async () => {
+    const statusChannel = channels.channel("serverStatus");
+    const statusEmbed = () => integration.status.embed();
+    const before = embeds("announcements").length;
     await actor.call("say", { player: "staff", text: "/shutdown 10" });
-    await waitFor(() => embeds("announcements").some((embed) => embed?.title === "Server restart"), 5000, "restart warning");
+    await waitFor(() => statusEmbed().fields?.some((item) => item.name === "Status" && item.value === "Restarting soon") ?? false, 5000, "restart countdown");
+    expect(statusEmbed().description).toMatch(/^The server restarts <t:\d+:R>/);
+    expect(statusEmbed().fields?.find((item) => item.name === "Next restart")?.value).toMatch(/<t:\d+:R>/);
     await actor.call("say", { player: "staff", text: "/shutdown stop" });
-    await waitFor(() => embeds("announcements").some((embed) => embed?.title === "Restart cancelled"), 5000, "cancel");
-    expect(embeds("announcements").find((embed) => embed?.title === "Server restart")!.description).toContain("in 10 minutes");
+    await waitFor(() => statusEmbed().fields?.some((item) => item.name === "Status" && item.value === "Online") ?? false, 5000, "countdown cleared");
+    expect(statusEmbed().description).toBeUndefined();
+    await integration.idle();
+    expect(embeds("announcements")).toHaveLength(before);
+    expect(statusChannel.sent).toHaveLength(1);
   });
 });

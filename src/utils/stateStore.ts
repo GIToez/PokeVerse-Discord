@@ -118,6 +118,8 @@ const stateSchema = z.object({
   catchMode: z.enum(CATCH_MODES).optional(),
   lastBootId: z.string().optional(),
   lastRestartAt: z.number().optional(),
+  /** A restart or save the game warned about (unix seconds), shown in #server-status until it happened. */
+  pendingRestart: z.object({ at: z.number(), kind: z.enum(["restart", "save"]), bootId: z.string().optional() }).optional(),
   adminCategoryId: z.string().optional(),
   /** Linking roles created or adopted by setup: `verified`, `premium`, `staff:<group id>`. */
   roles: z.record(z.string()).default({}),
