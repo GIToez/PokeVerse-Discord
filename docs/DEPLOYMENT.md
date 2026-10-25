@@ -92,6 +92,8 @@ any token: the packaging script fails if it finds one.
 - **Updating**: stop the service, replace `bot/`, `node/` and the scripts, keep
   `.env.production`, `data/` and `logs/`, start the service.
 - **Game restarts** do not need a bot restart; the bot reconnects and updates the status.
+  Restart and save warnings show as a countdown in the `#server-status` message, not as
+  posts in `#game-announcements`.
 - **Bot restarts** do not affect the game; events during the outage are queued by the game
   (up to `discordBridgeQueueSize`) and stale ones are dropped.
 - **Rotating the bridge secret**: change it in both files, restart the game and the bot.

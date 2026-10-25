@@ -116,8 +116,8 @@ PokeVerse Integration
   #pokemon-catches      catch announcements              read-only
   #shiny-spawns         shiny spawn alerts               read-only
   #legendary-spawns     legendary spawn alerts           read-only
-  #game-announcements   news, GM broadcasts, restarts    read-only
-  #server-status        one live status message          read-only
+  #game-announcements   news, events, GM broadcasts      read-only
+  #server-status        live status + restart countdown  read-only
   #bot-commands         /trainer, /pokemon, /server      members can write
   #bug-reports          forum: one post per bug report   members comment, staff set tags
 Admin Logs                                               private (activity log or player reports)

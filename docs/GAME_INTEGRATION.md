@@ -238,7 +238,7 @@ server -> {"type":"response","requestId":"1","ok":true,"result":{...}}
 | `spawn` | `#shiny-spawns` / `#legendary-spawns` |
 | `legendary` | `#legendary-spawns`: one post and thread per wild legendary encounter |
 | `broadcast` | `#game-announcements` |
-| `restart_warning` | `#game-announcements` |
+| `restart_warning` | `#server-status` message (countdown; never a new post) |
 | `server_state` | `#server-status` message |
 | `player_login` (scope `admin`) | `#player-activity` login embed |
 | `player_logout` (scope `admin`) | `#player-activity` logout embed |
@@ -251,7 +251,7 @@ server -> {"type":"response","requestId":"1","ok":true,"result":{...}}
 | `chat.send` | Discord -> game chat |
 | `trainer.lookup` | `/trainer` |
 | `pokemon.lookup`, `pokemon.search` | `/pokemon` and its autocomplete |
-| `server.status` | `/server`, `#server-status`, `check-bridge` |
+| `server.status` | `/server`, `#server-status` (including the optional `restart`), `check-bridge` |
 | `bridge.config` | Chat length limits, legendary list |
 | `admin.sessions` | Reconciling open sessions after a bot or game restart |
 | `link.redeem` | `/link` |
@@ -403,12 +403,24 @@ of the wild legendaries (`WildLegendaries.SPECIES`), sent in `bridge.config`.
   ended on time, removed when staff remove it, and made again if someone deletes it on
   Discord. An hour before each start it posts a reminder in `#game-announcements` (no ping).
   Needs Create Events and Manage Events (`CALENDAR_SYNC_ENABLED`).
-- Without the `announcements` feature: GM `/b` and client broadcasts, `/bc` (staff) and
-  `/shutdown` / global save warnings (including "cancelled") go to `#game-announcements`.
-  Automatic tips are not forwarded.
+- Without the `announcements` feature: GM `/b` and client broadcasts and `/bc` (staff) go
+  to `#game-announcements`. Automatic tips are not forwarded.
 - `#server-status` has one message that the bot edits: online/offline, players, uptime,
-  last restart. It is recreated if someone deletes it. Offline is shown when the bridge
-  disconnects.
+  next restart, last restart. It is recreated if someone deletes it. Offline is shown when
+  the bridge disconnects.
+- Restart and save warnings (`/shutdown`, the daily restart, global saves) never post in
+  `#game-announcements`; each `restart_warning` edits the `#server-status` message instead.
+  A `shutdown` warning sets the status to "Restarting soon" with a Discord countdown
+  (`<t:…:R>`, which counts down on its own) and the restart time; a `global_save` warning
+  adds "The server saves in …". `shutdown_cancelled` clears it. While the server is down
+  after a warned restart the status says "Restarting" (for up to 10 minutes), and the
+  countdown clears when the game comes back with a new `bootId`. The countdown is kept in
+  the bot's state file, so a bot restart doesn't lose it. `ANNOUNCE_RESTART_WARNINGS` is
+  still accepted but no longer does anything.
+- "Next restart": `server.status` may return `restart: { at, reason }` (unix seconds;
+  `reason` is `daily`, `staff` or `update`, `null` when nothing is planned). The bot shows it
+  as e.g. "Daily restart at 06:00 (in 3 hours)". A game without the field just has no
+  "Next restart" line until a warning arrives.
 
 ## Known pre-existing game issues
 

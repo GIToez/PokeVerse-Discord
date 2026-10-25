@@ -14,8 +14,8 @@ Discord is down, gameplay is not affected.
 | Confirmed catch announcements, modes `all`, `rare_only`, `shiny_legendary_only`, `off` | `#pokemon-catches` |
 | Shiny and legendary spawn alerts (a shiny legendary is announced once) | `#shiny-spawns`, `#legendary-spawns` |
 | Wild legendary encounters: one post and thread each, with sightings, flees and the end | `#legendary-spawns` |
-| GM broadcasts, restart/global save warnings, manual announcements | `#game-announcements` |
-| One live status message (online/offline, players, uptime, restarts) | `#server-status` |
+| GM broadcasts, game announcements, manual announcements | `#game-announcements` |
+| One live status message (online/offline, players, uptime, next restart with a countdown, last restart) | `#server-status` |
 | `/trainer`, `/pokemon` (autocomplete and artwork from the game), `/server` | anywhere, `#bot-commands` suggested |
 | `/pokeverse setup | status | channel | catches | announce | unlink` for admins | anywhere |
 | Automatic creation of the "PokeVerse Integration" category and channels; never deletes anything | on startup (development) or `setup` |
