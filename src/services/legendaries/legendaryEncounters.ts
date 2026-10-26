@@ -9,6 +9,7 @@ import type { Logger } from "../../utils/logger.js";
 import type { Metrics } from "../../utils/metrics.js";
 import type { LegendaryEncounterRecord, LegendarySetRecord, StateStore } from "../../utils/stateStore.js";
 import { COLORS, embedMessage, plain } from "../embeds.js";
+import type { PingRoles } from "../pings/pingRoles.js";
 import type { ArtworkResolver } from "../pokemon/artwork.js";
 
 export interface LegendaryEncountersOptions {
@@ -17,6 +18,8 @@ export interface LegendaryEncountersOptions {
   store: StateStore;
   queue: DeliveryQueue;
   artwork: ArtworkResolver;
+  /** A new encounter or set pings Legendary Pings (its updates don't). */
+  pings?: PingRoles;
   logger: Logger;
   metrics: Metrics;
   now?: () => number;
@@ -331,7 +334,8 @@ export class LegendaryEncounters {
       asleep: event.asleep ?? undefined,
       revealed: event.event === "revealed" || undefined,
     };
-    record.messageId = await channel.send(embedMessage(buildEncounterEmbed(record), artwork.resolve(event.dexNumber), "image"));
+    const mention = await this.options.pings?.mention(["legendary"]);
+    record.messageId = await channel.send({ ...embedMessage(buildEncounterEmbed(record), artwork.resolve(event.dexNumber), "image"), ...mention });
     record.threadId = await this.startThread(channel, record.messageId, threadName(record, encounterId), encounterId);
     store.update((state) => {
       this.prune(state);
@@ -371,7 +375,8 @@ export class LegendaryEncounters {
         area: describeArea({ area: member.area, position: member.position }, this.options.config.locationMode),
       })),
     };
-    set.messageId = await channel.send({ embeds: [buildSetEmbed(set)] });
+    const mention = await this.options.pings?.mention(["legendary"]);
+    set.messageId = await channel.send({ embeds: [buildSetEmbed(set)], ...mention });
     set.threadId = await this.startThread(channel, set.messageId, `${set.name} #${members[0]!.encounterId}`.slice(0, 100), members[0]!.encounterId);
     store.update((state) => {
       this.prune(state);

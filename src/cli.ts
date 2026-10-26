@@ -115,10 +115,9 @@ async function registerCommands(config: BotConfig): Promise<number> {
     printError("DISCORD_APPLICATION_ID does not match the bot token.", []);
     return 1;
   }
-  await rest.put(Routes.applicationGuildCommands(application.id, config.discord.guildId), {
-    body: buildCommandDefinitions(),
-  });
-  print(`Registered ${buildCommandDefinitions().length} commands in guild ${config.discord.guildId}.`);
+  const body = buildCommandDefinitions({ linking: config.linking.enabled, boosters: config.boosters.enabled, pings: config.pings.roles.length > 0 });
+  await rest.put(Routes.applicationGuildCommands(application.id, config.discord.guildId), { body });
+  print(`Registered ${body.length} commands in guild ${config.discord.guildId}.`);
   return 0;
 }
 

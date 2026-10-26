@@ -19,6 +19,7 @@ const CATCH_MODE_LABELS: Record<(typeof CATCH_MODES)[number], string> = {
 export interface CommandDefinitionOptions {
   linking: boolean;
   boosters?: boolean;
+  pings?: boolean;
 }
 
 interface Definition {
@@ -133,6 +134,14 @@ export function buildCommandDefinitions(options: CommandDefinitionOptions = { li
       new SlashCommandBuilder()
         .setName("booster")
         .setDescription("Your server boost streak and Soul Coin rewards (only you can see it)")
+        .setContexts(InteractionContextType.Guild),
+    );
+  }
+  if (options.pings) {
+    commands.push(
+      new SlashCommandBuilder()
+        .setName("pings")
+        .setDescription("Turn ping notifications (events, shinies, legendaries, news) on or off")
         .setContexts(InteractionContextType.Guild),
     );
   }

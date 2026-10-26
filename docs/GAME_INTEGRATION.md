@@ -395,9 +395,11 @@ of the wild legendaries (`WildLegendaries.SPECIES`), sent in `bridge.config`.
   link to the Discord event when there is one.
 - Pings: staff pick one with `/b @everyone text`, `@verified`, `@RoleName` (the tag is taken
   out of the in-game text) or the Admin window's **Ping on Discord**. @everyone and @here are
-  for Gamemasters and up (access 3), and need the bot's Mention Everyone. Otherwise
-  `ANNOUNCE_PINGS` applies (default: calendar holiday and weekend events ping the Verified
-  Trainer role). Role names are matched ignoring case, spaces and punctuation.
+  for Gamemasters and up (access 3), and need the bot's Mention Everyone. Otherwise the
+  category's opt-in ping role applies (`PING_ROLE_NAMES`: calendar holiday and weekend events
+  ping Event Pings, news pings News Pings), and for a category without one, `ANNOUNCE_PINGS`
+  (empty by default). Bonus events staff start never ping. Role names are matched ignoring
+  case, spaces and punctuation.
 - `announcements.roles` (bot to game, on connect and every 15 minutes): the server's role
   names (up to 50) and whether the bot may ping @everyone, for the Admin window's list.
 - Calendar: with the `calendar` feature the bot reads the next 30 days (`calendar.range`, at

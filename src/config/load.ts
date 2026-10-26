@@ -3,6 +3,7 @@ import { isAbsolute, resolve } from "node:path";
 import type { ZodError } from "zod";
 import type { CatchMode } from "../utils/stateStore.js";
 import type { LogFormat, LogLevel } from "../utils/logger.js";
+import type { PingKind } from "../services/pings/pingRoles.js";
 import { readEnvFile } from "./envFile.js";
 import { envSchema, PROFILES, SPAWN_SOURCES, type ACTIVITY_IP_MODES, type Profile } from "./schema.js";
 
@@ -53,6 +54,10 @@ export interface BotConfig {
     staffPings: boolean;
     reminders: boolean;
     calendar: boolean;
+  };
+  pings: {
+    /** Opt-in ping roles; empty when PING_ROLES_ENABLED=false. */
+    roles: Array<{ kind: PingKind; name: string }>;
   };
   activity: {
     enabled: boolean;
@@ -205,6 +210,17 @@ export function loadConfig(options: LoadOptions): BotConfig {
       problems.push("BRIDGE_HOST is not a loopback address; set BRIDGE_ALLOW_REMOTE=true only for a private network or tunnel.");
     }
   }
+  if (raw.PING_ROLES_ENABLED) {
+    const otherRoles = [
+      ...(raw.LINKING_ENABLED ? [raw.VERIFIED_ROLE_NAME, ...(raw.PREMIUM_ROLE_ENABLED ? [raw.PREMIUM_ROLE_NAME] : [])] : []),
+      ...(raw.LINKING_ENABLED && raw.STAFF_ROLES_ENABLED ? raw.STAFF_ROLE_NAMES.map((role) => role.name) : []),
+    ].map((name) => name.trim().toLowerCase());
+    for (const role of raw.PING_ROLE_NAMES) {
+      if (otherRoles.includes(role.name.toLowerCase())) {
+        problems.push(`PING_ROLE_NAMES: "${role.name}" is also an account linking role; members could hand it to themselves. Use another name.`);
+      }
+    }
+  }
   if (problems.length > 0) {
     throw new ConfigError(`Invalid configuration in ${envFile}`, problems);
   }
@@ -262,6 +278,7 @@ export function loadConfig(options: LoadOptions): BotConfig {
       reminders: raw.ANNOUNCE_EVENT_REMINDERS,
       calendar: raw.CALENDAR_SYNC_ENABLED,
     },
+    pings: { roles: raw.PING_ROLES_ENABLED ? raw.PING_ROLE_NAMES : [] },
     activity: {
       enabled: raw.ACTIVITY_LOG_ENABLED,
       viewerRoleIds: raw.ACTIVITY_LOG_VIEWER_ROLE_IDS.length > 0 || raw.ACTIVITY_LOG_VIEWER_USER_IDS.length > 0
@@ -340,6 +357,7 @@ export function describeConfig(config: BotConfig): Record<string, unknown> {
           nicknameSync: config.linking.nicknameSync,
         }
       : false,
+    pingRoles: config.pings.roles.length > 0 ? config.pings.roles.map((role) => role.name) : false,
     autoSetup: config.autoSetup,
     artworkDir: config.artworkDir ?? null,
     stateFile: config.stateFile,

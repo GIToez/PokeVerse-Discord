@@ -124,7 +124,7 @@ const stateSchema = z.object({
   pendingRestart: z.object({ at: z.number(), kind: z.enum(["restart", "save"]), bootId: z.string().optional() }).optional(),
   adminCategoryId: z.string().optional(),
   staffCategoryId: z.string().optional(),
-  /** Linking roles created or adopted by setup: `verified`, `premium`, `staff:<group id>`. */
+  /** Roles created or adopted by setup: `verified`, `premium`, `staff:<group id>`, `ping:<kind>`. */
   roles: z.record(z.string()).default({}),
   /**
    * Members the bot gave a linking role or nickname, so they can be cleaned up after an

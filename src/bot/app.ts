@@ -112,7 +112,7 @@ export class BotApp {
     this.guild = new DiscordGuildPort(guild);
     logger.info("Using guild", { guild: guild.name, id: guild.id });
 
-    await guild.commands.set(buildCommandDefinitions({ linking: config.linking.enabled, boosters: config.boosters.enabled }));
+    await guild.commands.set(buildCommandDefinitions({ linking: config.linking.enabled, boosters: config.boosters.enabled, pings: config.pings.roles.length > 0 }));
     logger.info("Slash commands registered for the guild");
 
     if (config.autoSetup || options.setupOnly) {

@@ -57,6 +57,7 @@ a build without account linking, the commands say so and change nothing. See
 | `/characters` | Your characters on this world with level, class, main and online tags. |
 | `/main character:<name>` | Choose your main character (autocomplete lists only your own). Updates the nickname. |
 | `/sync` | Re-reads the link from the game and fixes roles and nickname now. 2 per minute. |
+| `/pings` | Only with ping roles on (`PING_ROLES_ENABLED=true`, default; works without account linking too). A private panel with an on/off button for each ping role: Event Pings, Shiny Pings, Legendary Pings, News Pings. The buttons only work for you. |
 | `/booster` | Only with `BOOSTER_REWARDS_ENABLED=true`. Your current boost streak, the weeks paid, Soul Coins received, when the next week is due and the server's boosts and level. Also picks up a boost the bot has not seen yet. |
 
 ### `/pokeverse` (admins)

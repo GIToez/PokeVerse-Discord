@@ -111,8 +111,8 @@ describe("game announcements", () => {
     expect(gameEventSchema.parse({ ...STARTED, full: "Weekend Event has started: Double EXP" })).toMatchObject({ kind: "announcement", category: "event" });
   });
 
-  it("posts a calendar event in its colour, links the Discord event and pings Verified Trainer", async () => {
-    const { announcer, channel, queue, verified } = gameSetup();
+  it("posts a calendar event in its colour, links the Discord event and pings the ANNOUNCE_PINGS role", async () => {
+    const { announcer, channel, queue, verified } = gameSetup({ ANNOUNCE_PINGS: "event=verified" });
     expect(announcer.handleAnnouncement(envelope(STARTED))).toBe(true);
     await queue.idle();
     const message = channel.sent[0]!.message;

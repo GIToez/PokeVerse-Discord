@@ -18,6 +18,7 @@ import type { LinkApi } from "../integrations/pokeverse/gameApi.js";
 import type { BoosterRewards } from "../services/boosters/boosterRewards.js";
 import type { LinkService } from "../services/linking/linkService.js";
 import { LINK_COMMANDS, type LinkCommands } from "./linkCommands.js";
+import { PING_COMMAND, type PingCommands } from "./pingCommands.js";
 
 export interface CommandUser {
   id: string;
@@ -66,11 +67,13 @@ export interface CommandRouterOptions {
   activity?: ActivityLog | undefined;
   /** Booster rewards (absent when BOOSTER_REWARDS_ENABLED=false). */
   boosters?: BoosterRewards | undefined;
+  /** /pings (absent when ping roles are off). */
+  pings?: PingCommands | undefined;
 }
 
 /** Commands whose replies are always private. */
 export function isPrivateCommand(commandName: string): boolean {
-  return commandName === "pokeverse" || commandName === "booster" || (LINK_COMMANDS as readonly string[]).includes(commandName);
+  return commandName === "pokeverse" || commandName === "booster" || commandName === PING_COMMAND || (LINK_COMMANDS as readonly string[]).includes(commandName);
 }
 
 /** A free GeoIP database is refreshed monthly; older than this, the refresh stopped working. */
@@ -118,6 +121,8 @@ export class CommandRouter {
           return await this.admin(input);
         case "booster":
           return await this.booster(input);
+        case PING_COMMAND:
+          return this.options.pings ? await this.options.pings.handle(input.user.id) : reply("Ping notifications are not enabled on this server.");
         default:
           if (this.options.linking && (LINK_COMMANDS as readonly string[]).includes(input.commandName)) {
             return await this.options.linking.commands.handle(input);
@@ -155,6 +160,9 @@ export class CommandRouter {
     try {
       if (input.customId.startsWith("unlink:") && this.options.linking) {
         return await this.options.linking.commands.handleComponent(input);
+      }
+      if (input.customId.startsWith("pings:") && this.options.pings) {
+        return await this.options.pings.handleComponent(input);
       }
       return reply("This button is no longer active.");
     } catch (error) {

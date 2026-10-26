@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { ANNOUNCEMENT_CATEGORIES } from "../integrations/pokeverse/protocol.js";
+import { PING_KINDS, type PingKind } from "../services/pings/pingRoles.js";
 import { CATCH_MODES } from "../utils/stateStore.js";
 
 export const PROFILES = ["development", "production"] as const;
@@ -128,11 +129,12 @@ export const envSchema = z.object({
     }),
   /**
    * The role each category pings on its own: "<category>=<role name or verified>" pairs. Events only ping for
-   * holidays and the weekend events, never for bonus events staff start.
+   * holidays and the weekend events, never for bonus events staff start. A category with a ping role
+   * (PING_ROLE_NAMES) pings that instead.
    */
   ANNOUNCE_PINGS: z
     .string()
-    .default("event=verified")
+    .default("")
     .transform((value, context) => {
       const pings: Record<string, string> = {};
       for (const item of value.split(",").map((part) => part.trim()).filter(Boolean)) {
@@ -146,6 +148,29 @@ export const envSchema = z.object({
         pings[category] = role;
       }
       return pings;
+    }),
+  /** Opt-in ping roles members turn on and off themselves (Onboarding, Channels & Roles, /pings). */
+  PING_ROLES_ENABLED: bool(true),
+  /** "<kind>=<role name>" pairs; leave a kind out to never ping for it. */
+  PING_ROLE_NAMES: z
+    .string()
+    .default("event=Event Pings,shiny=Shiny Pings,legendary=Legendary Pings,news=News Pings")
+    .transform((value, context) => {
+      const roles: Array<{ kind: PingKind; name: string }> = [];
+      for (const item of value.split(",").map((part) => part.trim()).filter(Boolean)) {
+        const match = /^([a-z]+)\s*=\s*(.{1,100})$/i.exec(item);
+        const kind = (match?.[1]?.toLowerCase() ?? "") as PingKind;
+        const name = match?.[2]?.trim() ?? "";
+        if (
+          !match || !PING_KINDS.includes(kind) || /^@?(everyone|here)$/i.test(name) ||
+          roles.some((role) => role.kind === kind || role.name.toLowerCase() === name.toLowerCase())
+        ) {
+          context.addIssue({ code: z.ZodIssueCode.custom, message: `expected "<${PING_KINDS.join("|")}>=<role name>" pairs with unique kinds and names, got "${item}"` });
+          return z.NEVER;
+        }
+        roles.push({ kind, name });
+      }
+      return roles;
     }),
   /** Staff broadcasts may ping the role they name (@everyone only from Gamemasters up; the game checks). */
   ANNOUNCE_STAFF_PINGS: bool(true),

@@ -9,6 +9,7 @@ import type { Logger } from "../../utils/logger.js";
 import type { Metrics } from "../../utils/metrics.js";
 import type { ChannelPurpose } from "../../utils/stateStore.js";
 import { COLORS, embedMessage, plain } from "../embeds.js";
+import type { PingKind, PingRoles } from "../pings/pingRoles.js";
 import type { ArtworkResolver } from "../pokemon/artwork.js";
 
 export interface SpawnAnnouncerOptions {
@@ -16,6 +17,8 @@ export interface SpawnAnnouncerOptions {
   channels: ChannelDirectory;
   queue: DeliveryQueue;
   artwork: ArtworkResolver;
+  /** Shiny spawns ping Shiny Pings, legendary spawns Legendary Pings. */
+  pings?: PingRoles;
   logger: Logger;
   metrics: Metrics;
   now?: () => number;
@@ -135,13 +138,19 @@ export class SpawnAnnouncer {
       this.options.artwork.resolve(event.dexNumber),
       "image",
     );
+    const { config } = this.options;
+    const kinds: PingKind[] = [
+      ...(event.shiny && config.shinyEnabled ? ["shiny" as const] : []),
+      ...(event.legendary && config.legendaryEnabled ? ["legendary" as const] : []),
+    ];
     this.options.queue.enqueue(`spawn ${envelope.id}`, async () => {
       const channel = this.options.channels.get(decision.channel);
       if (!channel) {
         metrics.increment("spawns.no_channel");
         return;
       }
-      await channel.send(message);
+      const mention = await this.options.pings?.mention(kinds);
+      await channel.send({ ...message, ...mention });
       metrics.increment("spawns.announced");
       logger.info("Announced spawn", { id: envelope.id, species: event.species, channel: decision.channel });
     });

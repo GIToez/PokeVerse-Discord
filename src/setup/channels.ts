@@ -189,7 +189,7 @@ export const REQUIRED_GUILD_PERMISSIONS: PermissionName[] = [
 /** Guild permissions only needed for the report forums (status tags are moderated, posts are archived). */
 export const REPORT_GUILD_PERMISSIONS: PermissionName[] = ["ManageThreads"];
 
-/** Only needed for staff pings of @everyone, @here and roles nobody else can ping (ANNOUNCE_STAFF_PINGS). */
+/** Only needed for staff pings (ANNOUNCE_STAFF_PINGS) and the ping roles, which nobody else can ping. */
 export const PING_GUILD_PERMISSIONS: PermissionName[] = ["MentionEveryone"];
 
 /** Only needed for the calendar's scheduled events (CALENDAR_SYNC_ENABLED). */

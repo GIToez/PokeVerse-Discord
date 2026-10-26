@@ -12,6 +12,7 @@ import type { DeliveryQueue } from "../../utils/deliveryQueue.js";
 import type { Logger } from "../../utils/logger.js";
 import type { Metrics } from "../../utils/metrics.js";
 import { COLORS, plain } from "../embeds.js";
+import { PING_KINDS, type PingKind, type PingRoles } from "../pings/pingRoles.js";
 
 export const ANNOUNCEMENT_CATEGORIES = ["news", "event", "maintenance"] as const;
 export type AnnouncementCategory = (typeof ANNOUNCEMENT_CATEGORIES)[number];
@@ -22,6 +23,8 @@ export interface AnnouncerOptions {
   categories?: Set<string>;
   /** Category -> role name each one pings on its own ("verified": the Verified Trainer role). */
   pings?: Record<string, string>;
+  /** Opt-in ping roles; a category with one pings it instead of `pings`. */
+  pingRoles?: PingRoles;
   /** Staff broadcasts may ping the role they name. */
   staffPings?: boolean;
   verifiedRoleName?: string;
@@ -165,12 +168,16 @@ export class Announcer {
     return true;
   }
 
-  /** The staff member's pick, or the category's own ping (events: only holidays and the weekend events). */
+  /**
+   * The staff member's pick, or the category's own ping (events: only holidays and the weekend events):
+   * its ping role as `ping:<kind>`, otherwise the role from ANNOUNCE_PINGS.
+   */
   pingFor(event: AnnouncementEvent): string | undefined {
     if (event.ping && this.options.staffPings) {
       return event.ping;
     }
-    const role = this.options.pings?.[event.category];
+    const kind = (PING_KINDS as readonly string[]).includes(event.category) ? (event.category as PingKind) : undefined;
+    const role = kind && this.options.pingRoles?.has(kind) ? `ping:${kind}` : this.options.pings?.[event.category];
     if (!role) {
       return undefined;
     }
@@ -183,6 +190,10 @@ export class Announcer {
 
   /** The message content and allowed mentions for a ping; undefined when the role doesn't exist. */
   async resolvePing(ping: string): Promise<Pick<OutgoingMessage, "content" | "mentionRoleIds" | "mentionEveryone"> | undefined> {
+    const kind = /^ping:([a-z]+)$/.exec(ping)?.[1] as PingKind | undefined;
+    if (kind) {
+      return this.options.pingRoles?.mention([kind]);
+    }
     const name = ping.replace(/^@/, "");
     const guild = this.options.guild?.();
     const canMentionAll = guild ? guild.botPermissions().some((permission) => permission === "MentionEveryone" || permission === "Administrator") : false;

@@ -14,6 +14,7 @@ import {
 } from "../integrations/pokeverse/gameApi.js";
 import { FEATURES, type GameEventEnvelope } from "../integrations/pokeverse/protocol.js";
 import { LinkCommands } from "../commands/linkCommands.js";
+import { PingCommands } from "../commands/pingCommands.js";
 import { ActivityLog } from "../services/activity/activityLog.js";
 import { ActivityStore } from "../services/activity/activityStore.js";
 import { GeoIp } from "../services/activity/geoip.js";
@@ -24,6 +25,7 @@ import { CalendarSync } from "../services/calendar/calendarSync.js";
 import { CatchAnnouncer } from "../services/catches/catchAnnouncer.js";
 import { ChatRelay } from "../services/chat/chatRelay.js";
 import { StaffChatRelay } from "../services/chat/staffChatRelay.js";
+import { PingRoles } from "../services/pings/pingRoles.js";
 import { ArtworkResolver } from "../services/pokemon/artwork.js";
 import { PokemonAutocomplete } from "../services/pokemon/pokemonLookup.js";
 import { LegendaryEncounters } from "../services/legendaries/legendaryEncounters.js";
@@ -74,6 +76,7 @@ export class GameIntegration {
   readonly linking: LinkService | undefined;
   readonly reports: ReportForums;
   readonly boosters: BoosterRewards | undefined;
+  readonly pings: PingRoles;
   private readonly queues: Record<string, DeliveryQueue>;
   private resyncTimer: NodeJS.Timeout | undefined;
   private rolesTimer: NodeJS.Timeout | undefined;
@@ -106,6 +109,13 @@ export class GameIntegration {
       boosters: queue("boosters", 1000),
     };
     this.links = createLinkApi(this.bridge);
+    this.pings = new PingRoles({
+      roles: config.pings.roles,
+      store,
+      guild: options.guild,
+      logger: logger.child({ component: "pings" }),
+      metrics,
+    });
 
     this.chat = new ChatRelay({
       config: config.chat,
@@ -133,6 +143,7 @@ export class GameIntegration {
       channels,
       queue: this.queues.spawns!,
       artwork: this.artwork,
+      pings: this.pings,
       logger: logger.child({ component: "spawns" }),
       metrics,
       now: options.now,
@@ -143,6 +154,7 @@ export class GameIntegration {
       store,
       queue: this.queues.spawns!,
       artwork: this.artwork,
+      pings: this.pings,
       logger: logger.child({ component: "legendaries" }),
       metrics,
       now: options.now,
@@ -164,6 +176,7 @@ export class GameIntegration {
       broadcasts: config.announcements.broadcasts,
       categories: config.announcements.categories,
       pings: config.announcements.pings,
+      pingRoles: this.pings,
       staffPings: config.announcements.staffPings,
       verifiedRoleName: config.linking.verifiedRoleName,
       guild: options.guild,
@@ -202,6 +215,7 @@ export class GameIntegration {
       pings: config.announcements.staffPings,
       calendar: config.announcements.calendar,
       staffRooms: config.linking.staffRooms,
+      pingRoles: config.pings.roles.map(({ kind, name }) => ({ key: `ping:${kind}` as const, name })),
     });
     this.staffChat = new StaffChatRelay({
       enabled: config.linking.staffChat,
@@ -293,6 +307,9 @@ export class GameIntegration {
       metrics,
       activity: this.activity,
       boosters: this.boosters,
+      pings: this.pings.enabled
+        ? new PingCommands({ pings: this.pings, guild: options.guild, logger: logger.child({ component: "pings" }), metrics })
+        : undefined,
       linking: this.linking
         ? {
             service: this.linking,

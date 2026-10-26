@@ -83,9 +83,9 @@ that already exist it changes only two things, and reports them as "updated":
 
 Discord only lets a bot give roles that are **below its own highest role**, and only change
 nicknames of members whose highest role is below it. After the first setup, drag the bot's
-role (named after the bot, e.g. "PokeVerse") **above Verified Trainer, Ace Trainer and the
-staff roles (Tutor, Senior Tutor, Gamemaster, Community Manager, God)** in **Server Settings >
-Roles**. The bot also cannot change the nickname of a member whose highest role is above the
+role (named after the bot, e.g. "PokeVerse") **above Verified Trainer, Ace Trainer, the
+staff roles (Tutor, Senior Tutor, Gamemaster, Community Manager, God) and the ping roles
+(Event Pings, Shiny Pings, Legendary Pings, News Pings)** in **Server Settings > Roles**. The bot also cannot change the nickname of a member whose highest role is above the
 bot's, so keep any separate moderator roles in mind. `/pokeverse status` reports roles the bot cannot assign.
 The server owner's nickname can never be changed by a bot; the bot reports this instead of
 failing.
@@ -219,6 +219,33 @@ transferring the last boost clears the start date and the streak starts again. T
 total boost count and level are visible to the bot (no extra intent); they drive the
 community bonus and the server-wide perks.
 
+## Ping notifications
+
+Setup creates one role per `PING_ROLE_NAMES` entry (default **Event Pings**, **Shiny Pings**,
+**Legendary Pings**, **News Pings**), without permissions and not mentionable, so members
+can't ping each other with them; the bot pings them with Mention Everyone. Verified Trainer is
+no longer pinged by default (`ANNOUNCE_PINGS` is empty), so it stays for linked accounts.
+
+| Role | Pinged on |
+| --- | --- |
+| Event Pings | Calendar holiday and weekend events in `#game-announcements` (not bonus events staff start) |
+| Shiny Pings | Shiny spawns (a shiny legendary pings both) |
+| Legendary Pings | Legendary spawn alerts, and each new wild legendary or set in `#legendary-spawns` (not its thread updates) |
+| News Pings | News announcements in `#game-announcements` |
+
+Members choose them three ways:
+
+- **Onboarding** (new members): Server Settings > Onboarding > Customize Questions > add a
+  question such as "Which pings do you want?", allow multiple answers, and add one answer per
+  ping role (answer "Shiny Pings" gives the Shiny Pings role, and so on). Make the question
+  optional so nobody is forced to pick. The bot can't do this for you: changing Onboarding
+  needs Manage Server, which the bot doesn't get.
+- **Channels & Roles** (everyone, later): the same Onboarding questions, under the server name.
+- **`/pings`**: a private panel with on/off buttons, for members who don't find the above.
+
+The bot's role must be above the ping roles for `/pings` to hand them out (see Role order).
+Staff can also ping them from the game (`/b @Shiny Pings ...`), like any other role.
+
 ## Admin access
 
 `/pokeverse` is hidden from members without **Manage Server** by default (server
@@ -228,7 +255,9 @@ it; otherwise Manage Server is required.
 
 ## Bot messages and mentions
 
-All bot messages are sent with mentions disabled (`allowed_mentions: { parse: [] }`).
-The only exception is the linked reporter of a bug report, on their own post.
+All bot messages are sent with mentions disabled (`allowed_mentions: { parse: [] }`), except
+for the one mention a post is meant to make: the ping role of an announcement or spawn (see
+Ping notifications), a staff member's chosen ping, the booster on their reward post, and the
+linked reporter of a bug report on their own post.
 Relayed chat also has `@everyone`, `@here`, user, role and channel mentions neutralized and
 Markdown escaped, so game players cannot ping Discord users.

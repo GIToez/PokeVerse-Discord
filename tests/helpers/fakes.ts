@@ -445,8 +445,8 @@ export class FakeGuild implements GuildPort {
     if (this.failCreateRole) {
       throw new Error("Missing Permissions");
     }
-    const role = this.addRoleInfo({ name });
-    return { id: role.id, name: role.name, managed: role.managed, assignable: role.assignable, administrator: role.administrator };
+    const role = this.addRoleInfo({ name, mentionable: false });
+    return { id: role.id, name: role.name, managed: role.managed, assignable: role.assignable, administrator: role.administrator, mentionable: false };
   }
 
   async fetchMember(userId: string): Promise<MemberInfo | undefined> {

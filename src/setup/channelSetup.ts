@@ -1,5 +1,6 @@
 import type { GuildChannelInfo, GuildPort, PermissionName, PermissionOverwriteSpec, RoleInfo } from "../bot/ports.js";
 import { checkPrivacy, type PrivacyCheck, type PrivacyPolicy } from "../services/activity/privacy.js";
+import type { PingKind } from "../services/pings/pingRoles.js";
 import type { Logger } from "../utils/logger.js";
 import type { ChannelPurpose, StateStore } from "../utils/stateStore.js";
 import {
@@ -37,8 +38,8 @@ export interface ChannelReport {
   accessProblems?: string[];
 }
 
-/** `staff:<id>`: the role for in-game group `<id>` (Tutor, Gamemaster, ...). */
-export type RoleKey = "verified" | "premium" | `staff:${number}`;
+/** `staff:<id>`: the role for in-game group `<id>` (Tutor, Gamemaster, ...). `ping:<kind>`: an opt-in ping role. */
+export type RoleKey = "verified" | "premium" | `staff:${number}` | `ping:${PingKind}`;
 
 export interface RoleReport {
   key: RoleKey;
@@ -78,6 +79,8 @@ export interface SetupOptions {
   calendar?: boolean;
   /** #tutor-room and #gm-room, opened by the `staff:<group>` linking roles. */
   staffRooms?: boolean;
+  /** Opt-in ping roles members pick for themselves (created without linking too). */
+  pingRoles?: Array<{ key: `ping:${PingKind}`; name: string }>;
 }
 
 const DEFAULT_OPTIONS: SetupOptions = {
@@ -105,7 +108,7 @@ function normalizeName(name: string): string {
 
 /**
  * Creates or adopts the "PokeVerse Integration" category and its channels, the private
- * "Admin Logs" category with #player-activity, and the account linking roles.
+ * "Admin Logs" category with #player-activity, the account linking roles and the ping roles.
  *
  * - Saved IDs win, wherever an admin moved or renamed the channel or role.
  * - Otherwise a channel with the expected name inside the category (or a role with the
@@ -170,7 +173,7 @@ export class ChannelSetup {
     const category = state.categoryId ? byId.get(state.categoryId) : undefined;
     const adminCategory = state.adminCategoryId ? byId.get(state.adminCategoryId) : undefined;
     const staffCategory = state.staffCategoryId ? byId.get(state.staffCategoryId) : undefined;
-    const roles = this.options.linking.enabled ? await this.inspectRoles(guild) : [];
+    const roles = await this.inspectRoles(guild);
     return this.finish(guild, {
       categoryId: category?.id,
       categoryAction: category ? "kept" : "skipped",
@@ -232,7 +235,7 @@ export class ChannelSetup {
       ? await this.ensureCategory(guild, channels, byId, "adminCategoryId", ADMIN_CATEGORY_NAME, this.privateOverwrites(guild), canCreate)
       : { category: undefined, action: "skipped" as ChannelAction };
     // The staff rooms' overwrites name the staff roles, so the roles come first.
-    const roles = this.options.linking.enabled ? await this.ensureRoles(guild) : [];
+    const roles = await this.ensureRoles(guild);
     const staff = this.definitions().some((definition) => definition.group === "staff")
       ? await this.ensureCategory(guild, channels, byId, "staffCategoryId", STAFF_CATEGORY_NAME, this.closedOverwrites(guild), canCreate)
       : { category: undefined, action: "skipped" as ChannelAction };
@@ -534,10 +537,19 @@ export class ChannelSetup {
       roleId && !access.roles.some((role) => role.id === roleId) ? [{ name, roleId }] : []);
   }
 
+  /** Linking roles (when linking is on), then the ping roles. */
+  private managedRoles(): Array<{ key: RoleKey; name: string }> {
+    return [...(this.options.linking.enabled ? this.options.linking.roles : []), ...(this.options.pingRoles ?? [])];
+  }
+
   private async inspectRoles(guild: GuildPort): Promise<RoleReport[]> {
+    const wanted = this.managedRoles();
+    if (wanted.length === 0) {
+      return [];
+    }
     const roles = await guild.listRoles();
     const saved = this.store.get().roles;
-    return this.options.linking.roles.map(({ key, name }) => {
+    return wanted.map(({ key, name }) => {
       const role = roles.find((item) => item.id === saved[key]);
       if (role?.administrator) {
         return { key, name: role.name, roleId: undefined, action: "failed", assignable: false, error: "This role has Administrator; the bot never hands it out." };
@@ -547,18 +559,22 @@ export class ChannelSetup {
   }
 
   private async ensureRoles(guild: GuildPort): Promise<RoleReport[]> {
+    const wanted = this.managedRoles();
+    if (wanted.length === 0) {
+      return [];
+    }
     const canCreate = guild.botPermissions().includes("ManageRoles");
     let roles: RoleInfo[];
     try {
       roles = await guild.listRoles();
     } catch (error) {
       this.logger.error("Could not list roles", { error });
-      return this.options.linking.roles.map(({ key, name }) => ({
+      return wanted.map(({ key, name }) => ({
         key, name, roleId: undefined, action: "failed", assignable: false, error: (error as Error).message,
       }));
     }
     const reports: RoleReport[] = [];
-    for (const { key, name } of this.options.linking.roles) {
+    for (const { key, name } of wanted) {
       const savedId = this.store.get().roles[key];
       let role = roles.find((item) => item.id === savedId);
       let action: ChannelAction = "kept";
@@ -624,11 +640,12 @@ export class ChannelSetup {
   ): SetupReport {
     const granted = guild.botPermissions();
     const { linking, reports, pings, calendar } = this.options;
+    const pingRoles = (this.options.pingRoles?.length ?? 0) > 0;
     const needed = REQUIRED_GUILD_PERMISSIONS.filter(
       (permission) =>
-        (linking.enabled || !LINKING_GUILD_PERMISSIONS.includes(permission)) &&
+        (linking.enabled || (pingRoles && permission === "ManageRoles") || !LINKING_GUILD_PERMISSIONS.includes(permission)) &&
         (reports.bugs || reports.players || !REPORT_GUILD_PERMISSIONS.includes(permission)) &&
-        (pings || !PING_GUILD_PERMISSIONS.includes(permission)) &&
+        (pings || pingRoles || !PING_GUILD_PERMISSIONS.includes(permission)) &&
         (calendar || !CALENDAR_GUILD_PERMISSIONS.includes(permission)),
     );
     const missingGuildPermissions = granted.includes("Administrator")
