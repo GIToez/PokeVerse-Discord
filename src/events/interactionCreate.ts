@@ -52,15 +52,14 @@ export function toCommandInput(interaction: ChatInputCommandInteraction): Comman
 }
 
 function toReply(message: OutgoingMessage): InteractionEditReplyOptions {
-  const components = message.buttons?.length
-    ? [
-        new ActionRowBuilder<ButtonBuilder>().addComponents(
-          message.buttons.map((button) =>
-            new ButtonBuilder().setCustomId(button.customId).setLabel(button.label).setStyle(BUTTON_STYLES[button.style]),
-          ),
-        ),
-      ]
-    : [];
+  const buttons = message.buttons ?? [];
+  // Discord allows five buttons per row and five rows.
+  const components = Array.from({ length: Math.min(5, Math.ceil(buttons.length / 5)) }, (_, row) =>
+    new ActionRowBuilder<ButtonBuilder>().addComponents(
+      buttons.slice(row * 5, row * 5 + 5).map((button) =>
+        new ButtonBuilder().setCustomId(button.customId).setLabel(button.label).setStyle(BUTTON_STYLES[button.style]),
+      ),
+    ));
   return {
     content: message.content ?? null,
     embeds: message.embeds ?? [],

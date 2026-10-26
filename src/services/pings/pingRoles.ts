@@ -4,14 +4,16 @@ import type { Metrics } from "../../utils/metrics.js";
 import type { StateStore } from "../../utils/stateStore.js";
 
 /** Notifications members turn on for themselves; each is a role the bot pings. */
-export const PING_KINDS = ["event", "shiny", "legendary", "news"] as const;
+export const PING_KINDS = ["event", "tournament", "shiny", "legendary", "news", "server"] as const;
 export type PingKind = (typeof PING_KINDS)[number];
 
 export const PING_DESCRIPTIONS: Record<PingKind, string> = {
-  event: "Holiday and weekend events in #game-announcements",
+  event: "Events in #game-announcements, and an hour before calendar events",
+  tournament: "An hour before each tournament",
   shiny: "Shiny Pokémon spawns in #shiny-spawns",
   legendary: "Wild legendaries in #legendary-spawns",
   news: "News posts in #game-announcements",
+  server: "Restarts and maintenance in #server-status",
 };
 
 export interface PingRoleConfig {

@@ -122,6 +122,8 @@ const stateSchema = z.object({
   lastRestartAt: z.number().optional(),
   /** A restart or save the game warned about (unix seconds), shown in #server-status until it happened. */
   pendingRestart: z.object({ at: z.number(), kind: z.enum(["restart", "save"]), bootId: z.string().optional() }).optional(),
+  /** The Server Pings post in #server-status for a restart or maintenance; deleted when it's over. */
+  serverNotice: z.object({ messageId: z.string(), reason: z.enum(["restart", "maintenance"]) }).optional(),
   adminCategoryId: z.string().optional(),
   staffCategoryId: z.string().optional(),
   /** Roles created or adopted by setup: `verified`, `premium`, `staff:<group id>`, `ping:<kind>`. */

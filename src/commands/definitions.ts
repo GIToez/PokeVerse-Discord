@@ -112,7 +112,9 @@ export function buildCommandDefinitions(options: CommandDefinitionOptions = { li
             .addChoices(...ANNOUNCEMENT_CATEGORIES.map((category) => ({ name: category, value: category }))),
         )
         .addStringOption((option) => option.setName("text").setDescription("Announcement text").setRequired(true).setMaxLength(2000))
-        .addStringOption((option) => option.setName("title").setDescription("Optional title").setMaxLength(100)),
+        .addStringOption((option) => option.setName("title").setDescription("Optional title").setMaxLength(100))
+        .addBooleanOption((option) =>
+          option.setName("ping").setDescription("Ping the category's ping role: News, Event or Server Pings (default: yes)")),
     );
   if (options.linking) {
     admin.addSubcommand((sub) =>

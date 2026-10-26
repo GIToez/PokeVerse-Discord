@@ -103,6 +103,14 @@ export function buildGameAnnouncementEmbed(event: AnnouncementEvent, time: numbe
   };
 }
 
+/** The ping role each /pokeverse announce category pings. */
+const MANUAL_PING_KINDS: Record<AnnouncementCategory, PingKind> = { news: "news", event: "event", maintenance: "server" };
+
+/** The game sends tournaments as events titled "<name> Tournament" (newer builds may add the source). */
+function isTournament(event: AnnouncementEvent): boolean {
+  return event.source === "tournament" || /\btournament$/i.test(event.title ?? "");
+}
+
 /** Lower case letters and digits only, so "@seniortutor" and "@Senior_Tutor" both find "Senior Tutor". */
 export function roleKey(name: string): string {
   return name.toLowerCase().replace(/[^a-z0-9]/g, "");
@@ -176,8 +184,17 @@ export class Announcer {
     if (event.ping && this.options.staffPings) {
       return event.ping;
     }
+    const pingRoles = this.options.pingRoles;
+    if (event.category === "event" && isTournament(event)) {
+      // The game posts a tournament an hour before ("Starts in 1 hour ...") and its winner; only the first pings.
+      return pingRoles?.has("tournament") && /^starts in/i.test(event.text) ? "ping:tournament" : undefined;
+    }
     const kind = (PING_KINDS as readonly string[]).includes(event.category) ? (event.category as PingKind) : undefined;
-    const role = kind && this.options.pingRoles?.has(kind) ? `ping:${kind}` : this.options.pings?.[event.category];
+    if (kind && pingRoles?.has(kind)) {
+      // Members chose these, so every event pings, bonus events staff start too.
+      return `ping:${kind}`;
+    }
+    const role = this.options.pings?.[event.category];
     if (!role) {
       return undefined;
     }
@@ -236,13 +253,14 @@ export class Announcer {
     this.options.metrics.increment("announcements.roles_synced");
   }
 
-  /** Admin announcement from /pokeverse announce. Resolves with the message id. */
-  async announce(category: AnnouncementCategory, title: string | undefined, text: string, author: string): Promise<string> {
+  /** Admin announcement from /pokeverse announce, pinging its ping role unless `ping` is false. Resolves with the message id. */
+  async announce(category: AnnouncementCategory, title: string | undefined, text: string, author: string, ping = true): Promise<string> {
     const channel = this.options.channels.get("announcements");
     if (!channel) {
       throw new Error("The announcements channel is not configured. Run /pokeverse setup first.");
     }
-    const id = await channel.send({ embeds: [buildManualAnnouncementEmbed(category, title, text, author, this.now())] });
+    const mention = ping ? await this.options.pingRoles?.mention([MANUAL_PING_KINDS[category]]) : undefined;
+    const id = await channel.send({ ...mention, embeds: [buildManualAnnouncementEmbed(category, title, text, author, this.now())] });
     this.options.metrics.increment("announcements.manual");
     return id;
   }

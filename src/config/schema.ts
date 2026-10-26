@@ -154,7 +154,7 @@ export const envSchema = z.object({
   /** "<kind>=<role name>" pairs; leave a kind out to never ping for it. */
   PING_ROLE_NAMES: z
     .string()
-    .default("event=Event Pings,shiny=Shiny Pings,legendary=Legendary Pings,news=News Pings")
+    .default("event=Event Pings,tournament=Tournament Pings,shiny=Shiny Pings,legendary=Legendary Pings,news=News Pings,server=Server Pings")
     .transform((value, context) => {
       const roles: Array<{ kind: PingKind; name: string }> = [];
       for (const item of value.split(",").map((part) => part.trim()).filter(Boolean)) {

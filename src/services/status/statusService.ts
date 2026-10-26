@@ -8,6 +8,7 @@ import type { Logger } from "../../utils/logger.js";
 import type { Metrics } from "../../utils/metrics.js";
 import type { StateStore } from "../../utils/stateStore.js";
 import { COLORS, plain } from "../embeds.js";
+import type { PingRoles } from "../pings/pingRoles.js";
 
 export interface StatusSnapshot {
   online: boolean;
@@ -72,10 +73,14 @@ export interface StatusServiceOptions {
   channels: ChannelDirectory;
   store: StateStore;
   refreshSeconds: number;
+  /** Restart countdowns and maintenance ping Server Pings in a post of their own. */
+  pings?: PingRoles;
   logger: Logger;
   metrics: Metrics;
   now?: () => number;
 }
+
+type ServerNotice = "restart" | "maintenance";
 
 const STATE_LABELS: Record<string, string> = {
   normal: "Online",
@@ -176,6 +181,7 @@ export class StatusService {
   private timer: NodeJS.Timeout | undefined;
   private rendering: Promise<void> | undefined;
   private dirty = false;
+  private notices: Promise<void> = Promise.resolve();
 
   constructor(private readonly options: StatusServiceOptions) {
     this.now = options.now ?? Date.now;
@@ -254,6 +260,7 @@ export class StatusService {
     if (envelope.event.players !== undefined) {
       this.snapshot.playersOnline = envelope.event.players;
     }
+    this.checkMaintenance();
     void this.render();
   }
 
@@ -272,6 +279,9 @@ export class StatusService {
         }
         const kind = event.reason === "shutdown" || event.shutdown ? "restart" : "save";
         this.setWarning({ at, kind, ...(this.snapshot.bootId ? { bootId: this.snapshot.bootId } : {}) });
+        if (kind === "restart") {
+          this.notice("restart", `🔧 **Server restart** <t:${Math.round(at)}:R>. The countdown is in the status message.`);
+        }
         this.options.metrics.increment("status.restart_warnings");
         void this.render();
         break;
@@ -288,6 +298,9 @@ export class StatusService {
   }
 
   private setWarning(warning: RestartCountdown | undefined): void {
+    if (!warning) {
+      this.clearNotice("restart");
+    }
     this.snapshot.warning = warning;
     if (JSON.stringify(this.options.store.get().pendingRestart) !== JSON.stringify(warning)) {
       this.options.store.update((state) => {
@@ -319,8 +332,67 @@ export class StatusService {
     if (this.snapshot.warning && !activeCountdown(this.snapshot, this.now() / 1000)) {
       this.setWarning(undefined);
     }
+    this.checkMaintenance();
     await this.render();
     return { ...this.snapshot };
+  }
+
+  /** Resolves when the Server Pings posts are written or deleted (used by tests). */
+  noticesIdle(): Promise<void> {
+    return this.notices;
+  }
+
+  private checkMaintenance(): void {
+    if (this.snapshot.online && this.snapshot.state === "maintain") {
+      this.notice("maintenance", "🛠️ **The server is closed for maintenance.** Only staff can log in until it reopens.");
+    } else if (this.snapshot.online && this.snapshot.state !== undefined) {
+      this.clearNotice("maintenance");
+    }
+  }
+
+  /** One post at a time, one per restart or maintenance; posted only when Server Pings can be pinged. */
+  private notice(reason: ServerNotice, text: string): void {
+    const pings = this.options.pings;
+    if (!pings?.has("server")) {
+      return;
+    }
+    this.notices = this.notices.then(async () => {
+      if (this.options.store.get().serverNotice?.reason === reason) {
+        return;
+      }
+      const channel = this.options.channels.get("serverStatus");
+      const mention = channel ? await pings.mention(["server"]) : undefined;
+      if (!channel || !mention) {
+        return;
+      }
+      await this.deleteNotice(undefined);
+      const messageId = await channel.send({ ...mention, content: `${mention.content} ${text}` });
+      this.options.store.update((state) => {
+        state.serverNotice = { messageId, reason };
+      });
+      this.options.metrics.increment(`status.notice.${reason}`);
+    }).catch((error: unknown) => {
+      this.options.logger.warn("Could not post the Server Pings notice", { reason, error });
+    });
+  }
+
+  private clearNotice(reason: ServerNotice): void {
+    this.notices = this.notices.then(() => this.deleteNotice(reason)).catch((error: unknown) => {
+      this.options.logger.warn("Could not delete the Server Pings notice", { reason, error });
+    });
+  }
+
+  /** Deletes the saved notice (only if it is for `reason`, when given). */
+  private async deleteNotice(reason: ServerNotice | undefined): Promise<void> {
+    const saved = this.options.store.get().serverNotice;
+    if (!saved || (reason && saved.reason !== reason)) {
+      return;
+    }
+    const channel = this.options.channels.get("serverStatus");
+    await channel?.delete(saved.messageId);
+    this.options.store.update((state) => {
+      state.serverNotice = undefined;
+    });
   }
 
   embed(): APIEmbed {

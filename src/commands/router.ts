@@ -296,8 +296,9 @@ export class CommandRouter {
         if (!category || !(ANNOUNCEMENT_CATEGORIES as readonly string[]).includes(category) || !text) {
           return reply("Choose a category and enter the announcement text.");
         }
-        await this.options.announcer.announce(category as AnnouncementCategory, input.options.title?.trim() || undefined, text, input.user.displayName);
-        this.options.logger.info("Manual announcement posted", { category, by: input.user.id });
+        const ping = input.options.ping !== "false";
+        await this.options.announcer.announce(category as AnnouncementCategory, input.options.title?.trim() || undefined, text, input.user.displayName, ping);
+        this.options.logger.info("Manual announcement posted", { category, ping, by: input.user.id });
         return reply("Announcement posted.", true, COLORS.success);
       }
       case "unlink":

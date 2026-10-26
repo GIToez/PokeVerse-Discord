@@ -3,7 +3,9 @@ import { buildCommandDefinitions } from "../../src/commands/definitions.js";
 import { PingCommands } from "../../src/commands/pingCommands.js";
 import { CommandRouter, isPrivateCommand } from "../../src/commands/router.js";
 import type { LegendaryEvent, SpawnEvent } from "../../src/integrations/pokeverse/protocol.js";
+import type { AnnouncementApi } from "../../src/integrations/pokeverse/gameApi.js";
 import { Announcer } from "../../src/services/announcements/announcer.js";
+import { CalendarSync } from "../../src/services/calendar/calendarSync.js";
 import { LegendaryEncounters } from "../../src/services/legendaries/legendaryEncounters.js";
 import { PingRoles } from "../../src/services/pings/pingRoles.js";
 import { ArtworkResolver } from "../../src/services/pokemon/artwork.js";
@@ -38,13 +40,15 @@ async function setup(overrides: Record<string, string> = {}) {
 }
 
 describe("ping roles: config and setup", () => {
-  it("defaults to four ping roles and no ANNOUNCE_PINGS role", () => {
+  it("defaults to six ping roles and no ANNOUNCE_PINGS role", () => {
     const config = makeConfig();
     expect(config.pings.roles).toEqual([
       { kind: "event", name: "Event Pings" },
+      { kind: "tournament", name: "Tournament Pings" },
       { kind: "shiny", name: "Shiny Pings" },
       { kind: "legendary", name: "Legendary Pings" },
       { kind: "news", name: "News Pings" },
+      { kind: "server", name: "Server Pings" },
     ]);
     expect(config.announcements.pings).toEqual({});
     expect(makeConfig({ PING_ROLES_ENABLED: "false" }).pings.roles).toEqual([]);
@@ -63,13 +67,11 @@ describe("ping roles: config and setup", () => {
 
   it("creates the ping roles (not mentionable) and saves them, even without account linking", async () => {
     const { report, store, guild } = await setup({ LINKING_ENABLED: "false" });
-    expect(report.roles.map((role) => [role.key, role.name, role.action])).toEqual([
-      ["ping:event", "Event Pings", "created"],
-      ["ping:shiny", "Shiny Pings", "created"],
-      ["ping:legendary", "Legendary Pings", "created"],
-      ["ping:news", "News Pings", "created"],
-    ]);
-    expect(Object.keys(store.get().roles)).toEqual(["ping:event", "ping:shiny", "ping:legendary", "ping:news"]);
+    const keys = ["ping:event", "ping:tournament", "ping:shiny", "ping:legendary", "ping:news", "ping:server"];
+    expect(report.roles.map((role) => role.key)).toEqual(keys);
+    expect(report.roles.every((role) => role.action === "created")).toBe(true);
+    expect(report.roles.map((role) => role.name)).toContain("Server Pings");
+    expect(Object.keys(store.get().roles)).toEqual(keys);
     expect(guild.roles.some((role) => role.name === "Verified Trainer" && store.get().roles.verified === role.id)).toBe(false);
   });
 
@@ -81,7 +83,7 @@ describe("ping roles: config and setup", () => {
 });
 
 describe("ping roles: pings", () => {
-  it("pings the ping role instead of the ANNOUNCE_PINGS role, and keeps quiet for bonus events", async () => {
+  it("pings the ping role instead of the ANNOUNCE_PINGS role, for every event and an hour before a tournament", async () => {
     const { config, guild, pings, role } = await setup({ ANNOUNCE_PINGS: "event=verified" });
     const channels = new FakeChannels();
     const metrics = new Metrics();
@@ -97,10 +99,13 @@ describe("ping roles: pings", () => {
     announcer.handleAnnouncement(envelope({ kind: "announcement", category: "event", title: "Experience event started", text: "2x" }));
     announcer.handleAnnouncement(envelope({ kind: "announcement", category: "news", title: "Patch notes", text: "New map" }));
     announcer.handleAnnouncement(envelope({ kind: "announcement", category: "staff", text: "Hi", ping: "Shiny Pings" }));
+    announcer.handleAnnouncement(envelope({ kind: "announcement", category: "event", title: "Kanto Tournament", text: "Starts in 1 hour (level 50-100). Sign up with Joey at the PvP area." }));
+    announcer.handleAnnouncement(envelope({ kind: "announcement", category: "event", title: "Kanto Tournament", text: "Ash won the tournament!" }));
     await queue.idle();
     const sent = channels.channel("announcements").sent.map((item) => item.message);
+    const event = `<@&${role("Event Pings").id}>`;
     expect(sent.map((message) => message.content)).toEqual([
-      `<@&${role("Event Pings").id}>`, undefined, `<@&${role("News Pings").id}>`, `<@&${role("Shiny Pings").id}>`,
+      event, event, `<@&${role("News Pings").id}>`, `<@&${role("Shiny Pings").id}>`, `<@&${role("Tournament Pings").id}>`, undefined,
     ]);
     expect(sent[0]!.mentionRoleIds).toEqual([role("Event Pings").id]);
   });
@@ -158,6 +163,78 @@ describe("ping roles: pings", () => {
     expect(sent).toEqual([ping, ping]);
   });
 
+  it("pings the matching role on /pokeverse announce unless ping is off", async () => {
+    const { guild, pings, role } = await setup();
+    const channels = new FakeChannels();
+    const metrics = new Metrics();
+    const queue = new DeliveryQueue({ name: "a", maxSize: 10, maxAttempts: 1, retryDelayMs: 1, logger: silentLogger, metrics });
+    const announcer = new Announcer({ broadcasts: true, pingRoles: pings, guild: () => guild, maxEventAgeSeconds: 600, channels, queue, logger: silentLogger, metrics });
+    await announcer.announce("news", "Patch", "New map", "Jim");
+    await announcer.announce("event", undefined, "Party tonight", "Jim");
+    await announcer.announce("maintenance", undefined, "Down at 22:00", "Jim");
+    await announcer.announce("news", undefined, "Quiet one", "Jim", false);
+    expect(channels.channel("announcements").sent.map((item) => item.message.content)).toEqual([
+      `<@&${role("News Pings").id}>`, `<@&${role("Event Pings").id}>`, `<@&${role("Server Pings").id}>`, undefined,
+    ]);
+  });
+
+  it("pings Event Pings on the calendar reminder", async () => {
+    const { store, guild, pings, role } = await setup();
+    const channels = new FakeChannels();
+    const metrics = new Metrics();
+    const queue = new DeliveryQueue({ name: "a", maxSize: 10, maxAttempts: 1, retryDelayMs: 1, logger: silentLogger, metrics });
+    const now = Date.now();
+    const api = {
+      connected: true,
+      hasFeature: () => true,
+      roles: async () => 0,
+      calendarRange: async (from: number, to: number) => ({
+        from, to,
+        events: [{ key: "weekend:1", id: "weekend", name: "Weekend Event", startsAt: Math.floor(now / 1000) + 1800, endsAt: Math.floor(now / 1000) + 90000, bonuses: [] }],
+      }),
+    } as unknown as AnnouncementApi;
+    guild.permissions = [...guild.permissions, "CreateEvents", "ManageEvents"];
+    const calendar = new CalendarSync({ enabled: true, reminders: true, api, guild: () => guild, channels, store, queue, pings, logger: silentLogger, metrics, now: () => now });
+    await calendar.sync();
+    await calendar.sync();
+    await queue.idle();
+    expect(channels.channel("announcements").sent.map((item) => item.message.content)).toEqual([`<@&${role("Event Pings").id}>`]);
+  });
+
+  it("pings Server Pings once per restart countdown and for maintenance, and deletes the post when it's over", async () => {
+    const { store, pings, role } = await setup();
+    const game = new FakeGame();
+    const channels = new FakeChannels();
+    const metrics = new Metrics();
+    const status = new StatusService({ game, channels, store, refreshSeconds: 60, pings, logger: silentLogger, metrics });
+    const channel = channels.channel("serverStatus");
+    const now = Math.floor(Date.now() / 1000);
+    status.onRestartWarning({ kind: "restart_warning", reason: "shutdown", minutes: 15 }, now);
+    status.onRestartWarning({ kind: "restart_warning", reason: "shutdown", minutes: 10 }, now + 300);
+    status.onRestartWarning({ kind: "restart_warning", reason: "global_save", minutes: 1 }, now + 400);
+    await status.noticesIdle();
+    await status.render();
+    const notices = channel.sent.filter((item) => item.message.content);
+    expect(notices).toHaveLength(1);
+    expect(notices[0]!.message.content).toBe(`<@&${role("Server Pings").id}> 🔧 **Server restart** <t:${now + 900}:R>. The countdown is in the status message.`);
+    expect(notices[0]!.message.mentionRoleIds).toEqual([role("Server Pings").id]);
+
+    status.onRestartWarning({ kind: "restart_warning", reason: "shutdown_cancelled" }, now + 500);
+    await status.noticesIdle();
+    expect(channel.deleted).toEqual([notices[0]!.id]);
+    expect(store.get().serverNotice).toBeUndefined();
+
+    await status.onConnected({ serverName: "PokeVerse", bootId: "boot-1", restarted: false, features: [] } as never);
+    status.onServerState(envelope({ kind: "server_state", state: "maintain" }));
+    status.onServerState(envelope({ kind: "server_state", state: "maintain" }));
+    await status.noticesIdle();
+    const maintenance = channel.sent.filter((item) => item.message.content?.includes("maintenance"));
+    expect(maintenance).toHaveLength(1);
+    status.onServerState(envelope({ kind: "server_state", state: "normal" }));
+    await status.noticesIdle();
+    expect(channel.deleted).toContain(maintenance[0]!.id);
+  });
+
   it("posts without a ping when the bot can't mention the role or the role is gone", async () => {
     const { guild, pings, role, metrics } = await setup();
     guild.permissions = ALL_PERMISSIONS.filter((permission) => permission !== "MentionEveryone");
@@ -182,14 +259,14 @@ describe("ping roles: /pings", () => {
     const panel = await commands.handle(MEMBER);
     expect(panel.ephemeral).toBe(true);
     expect(panel.message.embeds![0]!.description).toContain("**Shiny Pings**: off");
-    expect(panel.message.buttons!.map((button) => button.customId)).toEqual([
-      `pings:toggle:event:${MEMBER}`, `pings:toggle:shiny:${MEMBER}`, `pings:toggle:legendary:${MEMBER}`, `pings:toggle:news:${MEMBER}`,
-    ]);
+    expect(panel.message.buttons!.map((button) => button.customId)).toEqual(
+      ["event", "tournament", "shiny", "legendary", "news", "server"].map((kind) => `pings:toggle:${kind}:${MEMBER}`),
+    );
 
     const on = await commands.handleComponent({ customId: `pings:toggle:shiny:${MEMBER}`, user: user(MEMBER), guildId: DEV_GUILD });
     expect(guild.members.get(MEMBER)!.roleIds).toEqual([verified.id, role("Shiny Pings").id]);
     expect(on.message.embeds![0]!.description).toContain("Shiny Pings: **on**");
-    expect(on.message.buttons![1]).toMatchObject({ label: "Turn off Shiny Pings", style: "secondary" });
+    expect(on.message.buttons![2]).toMatchObject({ label: "Turn off Shiny Pings", style: "secondary" });
 
     await commands.handleComponent({ customId: `pings:toggle:shiny:${MEMBER}`, user: user(MEMBER), guildId: DEV_GUILD });
     expect(guild.members.get(MEMBER)!.roleIds).toEqual([verified.id]);

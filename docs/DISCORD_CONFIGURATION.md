@@ -221,17 +221,22 @@ community bonus and the server-wide perks.
 
 ## Ping notifications
 
-Setup creates one role per `PING_ROLE_NAMES` entry (default **Event Pings**, **Shiny Pings**,
-**Legendary Pings**, **News Pings**), without permissions and not mentionable, so members
+Setup creates one role per `PING_ROLE_NAMES` entry (default **Event Pings**, **Tournament
+Pings**, **Shiny Pings**, **Legendary Pings**, **News Pings**, **Server Pings**), without permissions and not mentionable, so members
 can't ping each other with them; the bot pings them with Mention Everyone. Verified Trainer is
 no longer pinged by default (`ANNOUNCE_PINGS` is empty), so it stays for linked accounts.
 
 | Role | Pinged on |
 | --- | --- |
-| Event Pings | Calendar holiday and weekend events in `#game-announcements` (not bonus events staff start) |
+| Event Pings | Every event announcement in `#game-announcements` (holidays, weekend events and bonus events staff start), the "starting soon" reminder an hour before a calendar event, and `/pokeverse announce category:event` |
+| Tournament Pings | A tournament's post an hour before it starts (not the winner post) |
 | Shiny Pings | Shiny spawns (a shiny legendary pings both) |
 | Legendary Pings | Legendary spawn alerts, and each new wild legendary or set in `#legendary-spawns` (not its thread updates) |
-| News Pings | News announcements in `#game-announcements` |
+| News Pings | News announcements in `#game-announcements` and `/pokeverse announce category:news` |
+| Server Pings | A restart countdown and maintenance (the game's `maintain` state), in a short post in `#server-status` that the bot deletes when the restart or maintenance is over; `/pokeverse announce category:maintenance` |
+
+Milestones, catches and the game's save countdowns never ping. `/pokeverse announce ping:False`
+posts without the ping. Tournaments are recognised by their title ("Kanto Tournament").
 
 Members choose them three ways:
 
@@ -244,7 +249,7 @@ Members choose them three ways:
 - **`/pings`**: a private panel with on/off buttons, for members who don't find the above.
 
 The bot's role must be above the ping roles for `/pings` to hand them out (see Role order).
-Staff can also ping them from the game (`/b @Shiny Pings ...`), like any other role.
+Staff can also ping them from the game (`/b @ShinyPings ...`), like any other role.
 
 ## Admin access
 

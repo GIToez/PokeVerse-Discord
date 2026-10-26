@@ -7,6 +7,7 @@ import type { Logger } from "../../utils/logger.js";
 import type { Metrics } from "../../utils/metrics.js";
 import type { CalendarEventRecord, StateStore } from "../../utils/stateStore.js";
 import { plain } from "../embeds.js";
+import type { PingRoles } from "../pings/pingRoles.js";
 
 export interface CalendarSyncOptions {
   enabled: boolean;
@@ -16,6 +17,8 @@ export interface CalendarSyncOptions {
   channels: ChannelDirectory;
   store: StateStore;
   queue: DeliveryQueue;
+  /** The reminder an hour before pings Event Pings. */
+  pings?: PingRoles;
   logger: Logger;
   metrics: Metrics;
   now?: () => number;
@@ -251,7 +254,8 @@ export class CalendarSync {
         this.options.metrics.increment("calendar.no_channel");
         return;
       }
-      await channel.send({ embeds: [embed] });
+      const mention = await this.options.pings?.mention(["event"]);
+      await channel.send({ ...mention, embeds: [embed] });
       this.options.metrics.increment("calendar.reminded");
     });
   }
