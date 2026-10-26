@@ -370,7 +370,7 @@ live("live: bot against the real PokeVerse game server", () => {
     expect(activity().filter((embed) => embed?.title?.startsWith("Session ended"))).toHaveLength(0);
   });
 
-  it("shows a restart countdown in #server-status instead of posting it", async () => {
+  it("shows a restart countdown in #server-status, pings Server Pings once and deletes the ping when cancelled", async () => {
     const statusChannel = channels.channel("serverStatus");
     const statusEmbed = () => integration.status.embed();
     const before = embeds("announcements").length;
@@ -382,7 +382,13 @@ live("live: bot against the real PokeVerse game server", () => {
     await waitFor(() => statusEmbed().fields?.some((item) => item.name === "Status" && item.value === "Online") ?? false, 5000, "countdown cleared");
     expect(statusEmbed().description).toBeUndefined();
     await integration.idle();
+    await integration.status.noticesIdle();
     expect(embeds("announcements")).toHaveLength(before);
-    expect(statusChannel.sent).toHaveLength(1);
+    const serverPings = guild.roles.find((role) => role.name === "Server Pings")!.id;
+    const notices = statusChannel.sent.filter((item) => item.message.content);
+    expect(notices).toHaveLength(1);
+    expect(notices[0]!.message.content).toMatch(new RegExp(`^<@&${serverPings}> 🔧 \\*\\*Server restart\\*\\* <t:\\d+:R>`));
+    expect(statusChannel.deleted).toEqual([notices[0]!.id]);
+    expect(statusChannel.sent.filter((item) => !item.message.content)).toHaveLength(1);
   });
 });
